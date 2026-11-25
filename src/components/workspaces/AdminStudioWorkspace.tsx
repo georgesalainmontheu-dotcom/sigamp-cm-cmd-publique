@@ -283,6 +283,27 @@ export function AdminStudioWorkspace({
   >('VIREMENT_TRESOR');
   const [paymentRef, setPaymentRef] = useState('VIR-TRESOR-2026-NEW');
   const [generatedReceiptText, setGeneratedReceiptText] = useState<string | null>(null);
+  const [licenseAlerts, setLicenseAlerts] = useState<
+    Array<{
+      licenseId: string;
+      entityId: string;
+      entityCode: string;
+      entityName: string;
+      tier: string;
+      alertSeverity: string;
+      daysRemaining: number;
+      autoAction: string;
+      mailtoHref: string;
+    }>
+  >([]);
+
+  // Grand Reset & Mode Démo réversible (Super Admin)
+  const [demoModeInfo, setDemoModeInfo] = useState<{
+    demoEnabled: boolean;
+    demoUsersCount: number;
+    activeDemoUsersCount: number;
+  } | null>(null);
+  const [grandResetPhrase, setGrandResetPhrase] = useState('');
 
   // Référentiels internes
   const [internalServicesText, setInternalServicesText] = useState(
@@ -336,7 +357,7 @@ export function AdminStudioWorkspace({
   const loadEntityData = useCallback(async (targetEntityId: string) => {
     try {
       const headers = await buildAuthenticatedJsonHeaders();
-      const [studioRes, licRes, supRes] = await Promise.all([
+      const [studioRes, licRes, supRes, demoRes] = await Promise.all([
         fetch(`/api/admin/entity-studio?entityId=${encodeURIComponent(targetEntityId)}`, {
           headers,
         }),
@@ -346,7 +367,23 @@ export function AdminStudioWorkspace({
         isSuperAdmin
           ? fetch('/api/admin/entities', { headers })
           : Promise.resolve(null),
+        isSuperAdmin
+          ? fetch('/api/admin/demo-mode', { headers })
+          : Promise.resolve(null),
       ]);
+
+      if (demoRes && demoRes.ok) {
+        const dJson = (await demoRes.json()) as {
+          demoEnabled?: boolean;
+          demoUsersCount?: number;
+          activeDemoUsersCount?: number;
+        };
+        setDemoModeInfo({
+          demoEnabled: Boolean(dJson.demoEnabled),
+          demoUsersCount: dJson.demoUsersCount ?? 0,
+          activeDemoUsersCount: dJson.activeDemoUsersCount ?? 0,
+        });
+      }
 
       if (supRes && supRes.ok) {
         const supJson = (await supRes.json()) as {
@@ -484,6 +521,7 @@ export function AdminStudioWorkspace({
 
       if (licRes.ok) {
         const lJson = (await licRes.json()) as {
+          alerts?: typeof licenseAlerts;
           licenses?: Array<{
             id: string;
             entity_id: string;
@@ -499,6 +537,9 @@ export function AdminStudioWorkspace({
             receipt_sha256?: string;
           }>;
         };
+        if (Array.isArray(lJson.alerts)) {
+          setLicenseAlerts(lJson.alerts);
+        }
         const latest = lJson.licenses?.[0];
         if (latest) {
           setActiveLicense({
@@ -914,6 +955,81 @@ export function AdminStudioWorkspace({
       setStatusBanner(
         `Remise à zéro production réussie pour ${identity.entityName} (${json.totalDeletedRows} enregistrements de test purgés, Audit ${json.auditLogId}).`
       );
+    } finally {
+      setIsBusy(false);
+    }
+  };
+
+  const handleSendLicenseRelance = async (alertItem: {
+    licenseId: string;
+    entityId: string;
+    tier: string;
+    mailtoHref: string;
+  }) => {
+    setIsBusy(true);
+    setErrorBanner(null);
+    try {
+      const headers = await buildAuthenticatedJsonHeaders();
+      const res = await fetch('/api/admin/licenses', {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({
+          action: 'SEND_RELANCE',
+          entityId: alertItem.entityId,
+          licenseId: alertItem.licenseId,
+          relanceTier: alertItem.tier,
+        }),
+      });
+      const json = (await res.json()) as { error?: string; message?: string };
+      if (!res.ok) {
+        setErrorBanner(json.error ?? 'Échec relance licence.');
+        return;
+      }
+      setStatusBanner(
+        json.message ?? 'Relance de renouvellement enregistrée et prête à l’envoi.'
+      );
+      if (typeof window !== 'undefined' && alertItem.mailtoHref) {
+        window.open(alertItem.mailtoHref, '_blank');
+      }
+    } finally {
+      setIsBusy(false);
+    }
+  };
+
+  const handleDemoModeAction = async (
+    action: 'DISABLE_DEMO' | 'ENABLE_DEMO' | 'GRAND_RESET_AND_DISABLE_DEMO'
+  ) => {
+    setIsBusy(true);
+    setErrorBanner(null);
+    setStatusBanner(null);
+    try {
+      const headers = await buildAuthenticatedJsonHeaders();
+      const res = await fetch('/api/admin/demo-mode', {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({
+          action,
+          confirmPhrase: grandResetPhrase,
+          reason: resetReason,
+        }),
+      });
+      const json = (await res.json()) as {
+        error?: string;
+        message?: string;
+        demoEnabled?: boolean;
+      };
+      if (!res.ok) {
+        setErrorBanner(json.error ?? 'Erreur opération Grand Reset / Mode Démo.');
+        return;
+      }
+      setStatusBanner(json.message ?? 'Opération exécutée avec succès.');
+      setGrandResetPhrase('');
+      if (typeof json.demoEnabled === 'boolean') {
+        setDemoModeInfo((prev) =>
+          prev ? { ...prev, demoEnabled: json.demoEnabled! } : null
+        );
+      }
+      await loadEntityData(selectedEntityId);
     } finally {
       setIsBusy(false);
     }
@@ -2338,6 +2454,49 @@ export function AdminStudioWorkspace({
                     {generatedReceiptText}
                   </pre>
                 )}
+
+                {/* Contrôle, Alertes Préventives & Relances Automatiques (J-30 / J-15 / J-7 / Expirée) */}
+                <div className="rounded-xl border border-amber-200 bg-amber-50/70 p-3.5 space-y-2">
+                  <div className="font-bold text-[#0A1F3D]">
+                    Contrôle, Alertes Automatiques &amp; Relances Licences (J-30 / J-15 / J-7 / Expirée)
+                  </div>
+                  <p className="text-[11px] text-slate-600">
+                    Le moteur vérifie automatiquement chaque date d’échéance à l’authentification (`/login`) et dans le bandeau supérieur : alerte préventive dès J-30, alerte critique à J-7, puis passage en lecture seule (archives consultables, nouveaux actes bloqués) dès expiration.
+                  </p>
+                  {licenseAlerts.length === 0 ? (
+                    <div className="rounded-lg bg-white px-3 py-2 text-[11px] text-emerald-800 border border-emerald-200">
+                      Aucune licence en alerte d’échéance (&le; 30 jours) sur cette sélection.
+                    </div>
+                  ) : (
+                    <div className="space-y-1.5">
+                      {licenseAlerts.map((al) => (
+                        <div
+                          key={al.licenseId}
+                          className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-amber-300 bg-white px-3 py-2"
+                        >
+                          <div>
+                            <span className="font-bold text-[#0A1F3D]">
+                              {al.entityName || identity.entityName}
+                            </span>{' '}
+                            <span className="rounded bg-amber-100 px-1.5 py-0.5 font-mono text-[10px] font-bold text-amber-900">
+                              {al.tier} · {al.daysRemaining}j
+                            </span>
+                            <div className="text-[10px] text-slate-500">
+                              Action auto : {al.autoAction}
+                            </div>
+                          </div>
+                          <button
+                            type="button"
+                            onClick={() => void handleSendLicenseRelance(al)}
+                            className="rounded-lg bg-[#0A1F3D] px-2.5 py-1 text-[11px] font-bold text-[#D4AF37] hover:opacity-90"
+                          >
+                            Consigner &amp; Relancer par Email
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
               </div>
             )}
 
@@ -2438,6 +2597,74 @@ export function AdminStudioWorkspace({
                   <div className="rounded-xl border border-emerald-300 bg-emerald-50 p-3 text-[11px] text-emerald-950">
                     <strong>Audit {resetSummary.auditLogId} :</strong> {resetSummary.totalDeletedRows} ligne(s) purgée(s) le{' '}
                     {resetSummary.executedAtIso}.
+                  </div>
+                )}
+
+                {isSuperAdmin && (
+                  <div className="mt-4 space-y-3 rounded-2xl border-2 border-[#0A1F3D]/25 bg-slate-50 p-4">
+                    <div className="flex flex-wrap items-center justify-between gap-2">
+                      <div>
+                        <div className="text-sm font-bold text-[#0A1F3D]">
+                          Grand Reset Plateforme &amp; Mode Démo Réversible (Super Admin)
+                        </div>
+                        <p className="text-[11px] text-slate-600">
+                          Désactive ou réactive en un clic toutes les entités et comptes de démonstration (sans perte de paramétrage), ou exécute le Grand Reset complet avant ouverture en production.
+                        </p>
+                      </div>
+                      <span
+                        className={`rounded-full px-2.5 py-1 text-[11px] font-bold ${
+                          demoModeInfo?.demoEnabled
+                            ? 'bg-amber-200 text-amber-950'
+                            : 'bg-emerald-200 text-emerald-950'
+                        }`}
+                      >
+                        {demoModeInfo?.demoEnabled ? 'Démos ACTIVES' : 'Démos DÉSACTIVÉES (Prod)'}
+                      </span>
+                    </div>
+
+                    <div className="flex flex-wrap gap-2">
+                      {demoModeInfo?.demoEnabled !== false ? (
+                        <button
+                          type="button"
+                          disabled={isBusy}
+                          onClick={() => void handleDemoModeAction('DISABLE_DEMO')}
+                          className="rounded-xl border border-amber-400 bg-amber-500 px-3.5 py-2 font-bold text-slate-950 hover:bg-amber-400"
+                        >
+                          Désactiver les Démos (Réversible)
+                        </button>
+                      ) : (
+                        <button
+                          type="button"
+                          disabled={isBusy}
+                          onClick={() => void handleDemoModeAction('ENABLE_DEMO')}
+                          className="rounded-xl border border-emerald-500 bg-emerald-600 px-3.5 py-2 font-bold text-white hover:bg-emerald-700"
+                        >
+                          Réactiver les Démos &amp; Comptes Test
+                        </button>
+                      )}
+                    </div>
+
+                    <div className="border-t border-slate-200 pt-3 space-y-2">
+                      <label className="block font-semibold text-rose-900">
+                        Grand Reset Global (purge toutes les données opérationnelles de toutes les entités + désactive les démos, conserve TIT-CS-ADMIN, Licences, Studio &amp; Lois ARMP) — Saisir <code className="rounded bg-white px-1">GRAND_RESET_PROD</code> :
+                      </label>
+                      <div className="flex flex-wrap gap-2">
+                        <input
+                          value={grandResetPhrase}
+                          onChange={(e) => setGrandResetPhrase(e.target.value)}
+                          placeholder="GRAND_RESET_PROD"
+                          className="rounded-lg border border-rose-300 bg-white px-3 py-1.5 font-mono text-xs"
+                        />
+                        <button
+                          type="button"
+                          disabled={isBusy}
+                          onClick={() => void handleDemoModeAction('GRAND_RESET_AND_DISABLE_DEMO')}
+                          className="rounded-xl bg-rose-800 px-3.5 py-1.5 font-bold text-white hover:bg-rose-900 disabled:opacity-60"
+                        >
+                          Exécuter le Grand Reset + Désactiver Démos
+                        </button>
+                      </div>
+                    </div>
                   </div>
                 )}
               </div>

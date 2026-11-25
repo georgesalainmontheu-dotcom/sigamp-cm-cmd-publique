@@ -19,6 +19,9 @@ import {
 import { useRouter } from 'next/navigation';
 import { useEffect, useState, type ReactNode } from 'react';
 import {
+  evaluateEntityLicenseStatus,
+} from '../../lib/domain/licensingEngine';
+import {
   pruneClosedRecordsFromLocalCache,
   useOfflineSyncStatus,
 } from '../../lib/offline/offlineStore';
@@ -35,6 +38,7 @@ import {
 } from '../../lib/ui/demoProfiles';
 import { GlobalAiCommandBar } from '../ai/GlobalAiCommandBar';
 import { TitCsBrandFooter } from '../branding/TitCsBrandFooter';
+import { HumanoidGuideRobot } from '../guide/HumanoidGuideRobot';
 import {
   AdminStudioWorkspace,
   type StudioPublishedPayload,
@@ -201,7 +205,7 @@ export function AppShell({ activeSpace, onSelectSpace, children }: AppShellProps
         className="sticky top-0 z-30 border-b border-gov-gold/40 bg-gov-navy text-white shadow-md"
       >
         <div className="mx-auto flex max-w-7xl flex-wrap items-center justify-between gap-3 px-4 py-3 sm:px-6">
-          <div className="flex items-center gap-3">
+          <div className="flex items-center gap-3" data-guide-tag="topbar-entity-badge">
             <div className="flex h-10 w-10 items-center justify-center overflow-hidden rounded-xl border border-gov-gold/60 bg-gov-navyLight">
               {activeProfile.logoUrl ? (
                 <img
@@ -242,6 +246,7 @@ export function AppShell({ activeSpace, onSelectSpace, children }: AppShellProps
           <div className="flex flex-wrap items-center gap-2">
             <button
               type="button"
+              data-guide-tag="topbar-ged-btn"
               onClick={() => setOverlayMode((m) => (m === 'GED' ? 'NONE' : 'GED'))}
               className={`inline-flex items-center gap-1.5 rounded-xl border px-3 py-2 text-xs font-semibold transition ${
                 overlayMode === 'GED'
@@ -255,6 +260,7 @@ export function AppShell({ activeSpace, onSelectSpace, children }: AppShellProps
 
             <button
               type="button"
+              data-guide-tag="topbar-factory-btn"
               onClick={() => setOverlayMode((m) => (m === 'FACTORY' ? 'NONE' : 'FACTORY'))}
               className={`inline-flex items-center gap-1.5 rounded-xl border px-3 py-2 text-xs font-semibold transition ${
                 overlayMode === 'FACTORY'
@@ -269,6 +275,7 @@ export function AppShell({ activeSpace, onSelectSpace, children }: AppShellProps
             {canAccessStudio && (
               <button
                 type="button"
+                data-guide-tag="topbar-studio-btn"
                 onClick={() => setOverlayMode((m) => (m === 'STUDIO' ? 'NONE' : 'STUDIO'))}
                 className={`inline-flex items-center gap-1.5 rounded-xl border px-3 py-2 text-xs font-semibold transition ${
                   overlayMode === 'STUDIO'
@@ -284,6 +291,7 @@ export function AppShell({ activeSpace, onSelectSpace, children }: AppShellProps
             {/* Bouton Copilote IA Ctrl+K */}
             <button
               type="button"
+              data-guide-tag="topbar-ai-btn"
               onClick={() => setAiOpen(true)}
               className="inline-flex items-center gap-2 rounded-xl border border-white/20 bg-white/10 px-3 py-2 text-xs font-medium text-white transition hover:bg-white/20"
             >
@@ -295,7 +303,10 @@ export function AppShell({ activeSpace, onSelectSpace, children }: AppShellProps
             </button>
 
             {/* Indicateur Temps Réel Etat Réseau & Sync */}
-            <div className="flex flex-wrap items-center gap-1.5 rounded-xl border border-white/15 bg-black/20 px-2.5 py-1.5 text-xs">
+            <div
+              data-guide-tag="topbar-offline-sync"
+              className="flex flex-wrap items-center gap-1.5 rounded-xl border border-white/15 bg-black/20 px-2.5 py-1.5 text-xs"
+            >
               {sync.isOnline ? (
                 <Wifi className="h-3.5 w-3.5 text-emerald-400" />
               ) : (
@@ -403,20 +414,70 @@ export function AppShell({ activeSpace, onSelectSpace, children }: AppShellProps
         </div>
       </header>
 
-      {/* Bandeau Licence Expirée / Restreinte si applicable */}
-      {(activeProfile.licenseStatus === 'EXPIREE' ||
-        activeProfile.licenseStatus === 'SUSPENDUE') && (
-        <div className="border-b border-rose-300 bg-rose-50 px-4 py-2 text-xs text-rose-900">
-          <div className="mx-auto flex max-w-7xl items-center gap-2 font-medium">
-            <ShieldAlert className="h-4 w-4 shrink-0 text-rose-700" />
-            <span>
-              Licence {activeProfile.licenseStatus} pour {activeProfile.entityName} : la
-              consultation des archives reste autorisée, mais la création de nouveaux actes
-              est bloquée jusqu’au renouvellement auprès de TIT-CS.
-            </span>
-          </div>
-        </div>
-      )}
+      {/* Bandeau Licence Expirée / Restreinte ou Alerte Préventive J-30 / J-15 / J-7 */}
+      {(() => {
+        const licEval = activeProfile.licenseExpiresAt
+          ? evaluateEntityLicenseStatus({
+              status: activeProfile.licenseStatus ?? 'ACTIVE',
+              expiresAtIso: activeProfile.licenseExpiresAt,
+              planCode: (activeProfile.licensePlanCode as 'ANNUELLE') ?? 'ANNUELLE',
+            })
+          : null;
+        if (
+          activeProfile.licenseStatus === 'EXPIREE' ||
+          activeProfile.licenseStatus === 'SUSPENDUE' ||
+          licEval?.effectiveStatus === 'EXPIREE'
+        ) {
+          return (
+            <div className="border-b border-rose-300 bg-rose-50 px-4 py-2 text-xs text-rose-900">
+              <div className="mx-auto flex max-w-7xl flex-wrap items-center justify-between gap-2 font-medium">
+                <div className="flex items-center gap-2">
+                  <ShieldAlert className="h-4 w-4 shrink-0 text-rose-700" />
+                  <span>
+                    Licence {licEval?.effectiveStatus ?? activeProfile.licenseStatus} pour{' '}
+                    {activeProfile.entityName} : la consultation des archives reste autorisée,
+                    mais la création de nouveaux actes est bloquée jusqu’au renouvellement auprès de TIT-CS.
+                  </span>
+                </div>
+                {canAccessStudio && (
+                  <button
+                    type="button"
+                    onClick={() => setOverlayMode('STUDIO')}
+                    className="rounded-lg bg-rose-700 px-2.5 py-1 text-[11px] font-bold text-white hover:bg-rose-800"
+                  >
+                    Renouveler dans Studio &rarr;
+                  </button>
+                )}
+              </div>
+            </div>
+          );
+        }
+        if (licEval?.isExpiringSoon) {
+          return (
+            <div className="border-b border-amber-300 bg-amber-50 px-4 py-2 text-xs text-amber-950">
+              <div className="mx-auto flex max-w-7xl flex-wrap items-center justify-between gap-2 font-medium">
+                <div className="flex items-center gap-2">
+                  <AlertTriangle className="h-4 w-4 shrink-0 text-amber-700" />
+                  <span>
+                    Alerte Renouvellement Licence ({licEval.daysRemaining} jour(s) restant(s)) :{' '}
+                    {licEval.statusMessage}
+                  </span>
+                </div>
+                {canAccessStudio && (
+                  <button
+                    type="button"
+                    onClick={() => setOverlayMode('STUDIO')}
+                    className="rounded-lg bg-amber-600 px-2.5 py-1 text-[11px] font-bold text-white hover:bg-amber-700"
+                  >
+                    Commander Renouvellement
+                  </button>
+                )}
+              </div>
+            </div>
+          );
+        }
+        return null;
+      })()}
 
       {/* Bandeau Profil Actif */}
       <div className="border-b border-slate-200 bg-white">
@@ -454,24 +515,35 @@ export function AppShell({ activeSpace, onSelectSpace, children }: AppShellProps
       {/* Contenu principal de l'espace */}
       <main className="mx-auto w-full max-w-7xl flex-1 px-4 py-6 sm:px-6">
         {overlayMode === 'STUDIO' ? (
-          <AdminStudioWorkspace
-            profile={activeProfile}
-            onStudioPublished={(pub) => setStudioOverride(pub)}
-          />
+          <div data-guide-tag="overlay-studio-root">
+            <AdminStudioWorkspace
+              profile={activeProfile}
+              onStudioPublished={(pub) => setStudioOverride(pub)}
+            />
+          </div>
         ) : overlayMode === 'GED' ? (
-          <GedArchiveWorkspace profile={activeProfile} />
+          <div data-guide-tag="overlay-ged-root">
+            <GedArchiveWorkspace profile={activeProfile} />
+          </div>
         ) : overlayMode === 'FACTORY' ? (
-          <DocumentFactoryWorkspace profile={activeProfile} />
+          <div data-guide-tag="overlay-factory-root">
+            <DocumentFactoryWorkspace profile={activeProfile} />
+          </div>
         ) : (
-          children({
-            profile: activeProfile,
-            isOnline: sync.isOnline,
-            triggerSync: sync.triggerSync,
-          })
+          <div data-guide-tag="workspace-primary-panel">
+            {children({
+              profile: activeProfile,
+              isOnline: sync.isOnline,
+              triggerSync: sync.triggerSync,
+            })}
+          </div>
         )}
       </main>
 
       <TitCsBrandFooter />
+
+      {/* Robot Humanoïde Guide Interactif par Rôle */}
+      <HumanoidGuideRobot profile={activeProfile} overlayMode={overlayMode} />
 
       {/* Barre de Commande IA Ctrl+K */}
       <GlobalAiCommandBar

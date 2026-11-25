@@ -51,12 +51,25 @@ def main() -> int:
         page.click("header button:has-text('44 Actes')")
         page.wait_for_selector("text=Gabarit Studio injecté", timeout=12000)
 
-        # 4. Studio & CMS V3.0 (11 modules + Header Bilingue/Centré)
+        # 4. Studio & CMS V3.0 (11 modules + Licences Relances + Grand Reset & Mode Démo)
         page.click("header button:has-text('Studio & CMS')")
         page.wait_for_selector("text=Explorateur & Modules CMS (11)", timeout=12000)
+        page.click("button:has-text('Vente & Gestion des Licences')")
+        page.wait_for_selector("text=Alertes Automatiques & Relances Licences", timeout=8000)
+        page.click("button:has-text('Remise à Zéro Production')")
+        page.wait_for_selector("text=Grand Reset Plateforme & Mode Démo Réversible", timeout=8000)
+
+        # 5. Robot Humanoïde Guide Interactif + Manuel Utilisateur PDF (HTTP 200)
+        page.click("[data-guide-tag='robot-launcher-btn']")
+        page.wait_for_selector("role=dialog[name='Assistant robot guide SIGAMP-CM']", timeout=8000)
+        page.click("button:has-text('Suivant')")
+        page.wait_for_timeout(400)
+        pdf_resp = page.request.get(f"{BASE_URL}/docs/SIGAMP_CM_Manuel_Utilisateur_Complet.pdf")
+        assert pdf_resp.status == 200, f"PDF manual status {pdf_resp.status}"
+        assert len(pdf_resp.body()) > 50000, "PDF manual unexpectedly small"
 
         browser.close()
-        print("E2E SMOKE TEST SUITE PASSED (Login, Supabase Projects/Deliverables, GED Auto-Seal, Document Factory Studio Header, 11-Module CMS)!")
+        print("E2E SMOKE TEST SUITE PASSED (Login, Supabase Projects/Deliverables, GED Auto-Seal, Document Factory Studio Header, 11-Module CMS, License Relances, Grand Reset/Demo Toggle, Humanoid Robot & PDF Manual)!")
         return 0
 
 

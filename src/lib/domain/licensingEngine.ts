@@ -243,6 +243,88 @@ Empreinte SHA-256 : ${receiptSha256}`;
   };
 }
 
+export type LicenseReminderTier = 'NONE' | 'J_30' | 'J_15' | 'J_7' | 'J_1' | 'EXPIREE';
+
+export interface LicenseAlertRelanceInfo {
+  tier: LicenseReminderTier;
+  alertSeverity: 'NONE' | 'WARNING' | 'CRITICAL' | 'BLOCKED';
+  daysRemaining: number;
+  autoAction:
+    | 'AUCUNE'
+    | 'BANNIERE_PREVENTIVE'
+    | 'RELANCE_EMAIL_URGENTE'
+    | 'MODE_LECTURE_SEULE'
+    | 'BLOCAGE_TOTAL';
+  relanceSubject: string;
+  relanceBody: string;
+  mailtoHref: string;
+}
+
+export function evaluateLicenseAlertAndRelance(
+  license: Pick<EntityLicenseRecord, 'status' | 'expiresAtIso' | 'planCode' | 'licenseKey'> & {
+    entityName?: string;
+    entityCode?: string;
+    contactEmail?: string;
+  },
+  referenceDate: Date = new Date()
+): LicenseAlertRelanceInfo {
+  const evalRes = evaluateEntityLicenseStatus(license, referenceDate);
+  const days = evalRes.daysRemaining;
+  let tier: LicenseReminderTier = 'NONE';
+  let autoAction: LicenseAlertRelanceInfo['autoAction'] = 'AUCUNE';
+
+  if (evalRes.effectiveStatus === 'SUSPENDUE' || evalRes.effectiveStatus === 'EN_ATTENTE_VALIDATION') {
+    tier = 'EXPIREE';
+    autoAction = 'BLOCAGE_TOTAL';
+  } else if (evalRes.effectiveStatus === 'EXPIREE' || days < 0) {
+    tier = 'EXPIREE';
+    autoAction = 'MODE_LECTURE_SEULE';
+  } else if (days <= 1) {
+    tier = 'J_1';
+    autoAction = 'RELANCE_EMAIL_URGENTE';
+  } else if (days <= 7) {
+    tier = 'J_7';
+    autoAction = 'RELANCE_EMAIL_URGENTE';
+  } else if (days <= 15) {
+    tier = 'J_15';
+    autoAction = 'BANNIERE_PREVENTIVE';
+  } else if (days <= 30) {
+    tier = 'J_30';
+    autoAction = 'BANNIERE_PREVENTIVE';
+  }
+
+  const label = license.entityName
+    ? `${license.entityName} (${license.entityCode ?? ''})`
+    : 'Entité Publique';
+  const relanceSubject = `[SIGAMP-CM / TIT-CS] Alerte Licence ${tier} — ${label}`;
+  const relanceBody = [
+    `Madame / Monsieur le Responsable (${label}),`,
+    '',
+    `Votre licence SIGAMP-CM (${license.planCode} — Clé ${license.licenseKey}) arrive à échéance le ${license.expiresAtIso.slice(0, 10)} (statut : ${evalRes.effectiveStatus}, ${days} jour(s) restant(s)).`,
+    tier === 'EXPIREE'
+      ? 'Conformément à la politique TIT-CS, vos archives GED restent consultables, mais la création de nouveaux marchés et actes est verrouillée jusqu’au renouvellement.'
+      : 'Pour éviter toute interruption de passation des marchés publics, veuillez procéder au renouvellement depuis Studio & CMS > Vente & Gestion des Licences (Virement Trésor, Bon de Commande Public, MTN MoMo ou Orange Money).',
+    '',
+    'Cordialement,',
+    'Direction Plateforme TIT-Consulting Solutions (TIT-CS)',
+  ].join('\n');
+
+  const to = license.contactEmail ?? '';
+  const mailtoHref = `mailto:${encodeURIComponent(to)}?subject=${encodeURIComponent(
+    relanceSubject
+  )}&body=${encodeURIComponent(relanceBody)}`;
+
+  return {
+    tier,
+    alertSeverity: evalRes.alertSeverity,
+    daysRemaining: days,
+    autoAction,
+    relanceSubject,
+    relanceBody,
+    mailtoHref,
+  };
+}
+
 export async function verifyOfflineLicenseProofToken(
   token: string,
   license: Pick<EntityLicenseRecord, 'licenseKey' | 'expiresAtIso'>

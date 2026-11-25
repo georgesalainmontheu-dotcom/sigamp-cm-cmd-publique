@@ -1,7 +1,9 @@
 import { createClient } from '@supabase/supabase-js';
 import {
+  evaluateLicenseAlertAndRelance,
   issueEntityLicense,
   LICENSE_PLANS,
+  type EntityLicenseStatus,
   type LicensePlanCode,
 } from '../../../../lib/domain/licensingEngine';
 import { guardAiApiRequest } from '../../../../lib/security/apiAuthAndRateLimit';
@@ -34,12 +36,12 @@ export async function GET(req: Request): Promise<Response> {
     entityId
       ? admin
           .from('entity_licenses')
-          .select('*')
+          .select('*, entities(code, name, type, email)')
           .eq('entity_id', entityId)
           .order('created_at', { ascending: false })
       : admin
           .from('entity_licenses')
-          .select('*, entities(code, name, type)')
+          .select('*, entities(code, name, type, email)')
           .order('created_at', { ascending: false })
           .limit(50),
     entityId
@@ -55,15 +57,49 @@ export async function GET(req: Request): Promise<Response> {
           .limit(50),
   ]);
 
+  const alerts = (licenses ?? [])
+    .map((row) => {
+      const r = row as {
+        id: string;
+        entity_id: string;
+        plan_code: LicensePlanCode;
+        status: EntityLicenseStatus;
+        license_key: string;
+        expires_at: string;
+        entities?: { code?: string; name?: string; email?: string } | null;
+      };
+      const evalInfo = evaluateLicenseAlertAndRelance({
+        status: r.status,
+        planCode: r.plan_code,
+        licenseKey: r.license_key,
+        expiresAtIso: r.expires_at,
+        entityName: r.entities?.name,
+        entityCode: r.entities?.code,
+        contactEmail: r.entities?.email,
+      });
+      return {
+        licenseId: r.id,
+        entityId: r.entity_id,
+        entityCode: r.entities?.code ?? '',
+        entityName: r.entities?.name ?? '',
+        planCode: r.plan_code,
+        licenseKey: r.license_key,
+        expiresAtIso: r.expires_at,
+        ...evalInfo,
+      };
+    })
+    .filter((a) => a.tier !== 'NONE');
+
   return Response.json({
     plans: plans ?? LICENSE_PLANS,
     licenses: licenses ?? [],
     orders: orders ?? [],
+    alerts,
   });
 }
 
 interface LicenseActionBody {
-  action: 'CREATE_ORDER' | 'ACTIVATE_OR_RENEW' | 'SUSPEND' | 'REACTIVATE';
+  action: 'CREATE_ORDER' | 'ACTIVATE_OR_RENEW' | 'SUSPEND' | 'REACTIVATE' | 'SEND_RELANCE';
   entityId: string;
   planCode?: LicensePlanCode;
   paymentChannel?: 'VIREMENT_TRESOR' | 'BON_COMMANDE_PUBLIC' | 'MTN_MOMO' | 'ORANGE_MONEY';
@@ -71,6 +107,7 @@ interface LicenseActionBody {
   licenseId?: string;
   orderId?: string;
   autoActivate?: boolean;
+  relanceTier?: string;
 }
 
 export async function POST(req: Request): Promise<Response> {
@@ -93,6 +130,26 @@ export async function POST(req: Request): Promise<Response> {
     const isSuperAdmin = Boolean(
       (profile as { platform_super_admin?: boolean } | null)?.platform_super_admin
     );
+
+    if (body.action === 'SEND_RELANCE') {
+      await admin.from('audit_logs').insert({
+        entity_id: body.entityId,
+        actor_user_id: guard.userId,
+        actor_role: isSuperAdmin ? 'SUPER_ADMIN' : 'ADMIN_ENTITE',
+        action: 'LICENSE_RELANCE_DISPATCHED',
+        table_name: 'entity_licenses',
+        record_id: body.licenseId ?? body.entityId,
+        payload: {
+          relanceTier: body.relanceTier ?? 'MANUAL_OR_J30',
+          dispatchedAt: new Date().toISOString(),
+        },
+      });
+      return Response.json({
+        ok: true,
+        relanceRecordedAt: new Date().toISOString(),
+        message: 'Relance de renouvellement consignée dans le journal d’audit officiel.',
+      });
+    }
 
     if (
       (body.action === 'SUSPEND' ||
