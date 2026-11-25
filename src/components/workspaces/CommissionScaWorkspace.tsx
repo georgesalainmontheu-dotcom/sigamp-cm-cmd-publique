@@ -3,19 +3,22 @@
 import {
   AlertTriangle,
   CheckSquare,
+  Cloud,
   Eye,
   Lock,
   Printer,
+  Save,
   ShieldAlert,
   Unlock,
   Users,
 } from 'lucide-react';
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { detectAbnormalLowBids } from '../../lib/domain/billingEngine';
 import {
   calculateIndemnityLiquidation,
   type SessionAttendanceRecord,
 } from '../../lib/domain/indemnityEngine';
+import { useWorkspacePersistence } from '../../lib/hooks/useWorkspacePersistence';
 import {
   generateOfficialPdf,
   type GeneratedOfficialPdfResult,
@@ -111,12 +114,42 @@ export function CommissionScaWorkspace({ profile }: { profile: ActiveRoleProfile
 
   const [pdfResult, setPdfResult] = useState<GeneratedOfficialPdfResult | null>(null);
 
-  const togglePresence = (attendanceId: string) => {
-    setAttendances((prev) =>
-      prev.map((a) =>
-        a.attendanceId === attendanceId ? { ...a, isPresent: !a.isPresent } : a
-      )
+  const { loadedState, syncBadge, isSaving, persistState } = useWorkspacePersistence<{
+    attendances: SessionAttendanceRecord[];
+    techValidated: boolean;
+    bids: BidEvalRow[];
+  }>(profile.entityId, 'CPM_SCA');
+
+  useEffect(() => {
+    if (!loadedState) return;
+    if (Array.isArray(loadedState.attendances)) setAttendances(loadedState.attendances);
+    if (typeof loadedState.techValidated === 'boolean') {
+      setTechValidated(loadedState.techValidated);
+    }
+    if (Array.isArray(loadedState.bids)) setBids(loadedState.bids);
+  }, [loadedState]);
+
+  const saveCpmState = (
+    nextAttendances = attendances,
+    nextTechValidated = techValidated,
+    nextBids = bids
+  ) => {
+    void persistState(
+      {
+        attendances: nextAttendances,
+        techValidated: nextTechValidated,
+        bids: nextBids,
+      },
+      'SAVE_CPM_SCA_SESSION'
     );
+  };
+
+  const togglePresence = (attendanceId: string) => {
+    const next = attendances.map((a) =>
+      a.attendanceId === attendanceId ? { ...a, isPresent: !a.isPresent } : a
+    );
+    setAttendances(next);
+    saveCpmState(next, techValidated, bids);
   };
 
   const sessionIndemnity = useMemo(
@@ -202,6 +235,25 @@ export function CommissionScaWorkspace({ profile }: { profile: ActiveRoleProfile
 
   return (
     <div className="space-y-6">
+      <div className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-xs shadow-sm">
+        <span className="inline-flex items-center gap-1.5 font-semibold text-gov-navy">
+          <Cloud className="h-4 w-4 text-emerald-600" />
+          Persistance Serveur Commission (CPM / SCA) :{' '}
+          <span className="font-normal text-slate-600">
+            {syncBadge ?? 'Synchronisation prête'}
+          </span>
+        </span>
+        <button
+          type="button"
+          disabled={isSaving}
+          onClick={() => saveCpmState()}
+          className="inline-flex items-center gap-1.5 rounded-lg bg-gov-navy px-3 py-1.5 font-semibold text-white hover:bg-gov-navyLight disabled:opacity-60"
+        >
+          <Save className="h-3.5 w-3.5 text-gov-gold" />
+          {isSaving ? 'Sauvegarde...' : 'Sauvegarder Supabase'}
+        </button>
+      </div>
+
       {/* Salle virtuelle d'ouverture & Feuille de présence émargée */}
       <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
         <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
@@ -270,7 +322,11 @@ export function CommissionScaWorkspace({ profile }: { profile: ActiveRoleProfile
             <div className="flex gap-2">
               <button
                 type="button"
-                onClick={() => setTechValidated((v) => !v)}
+                onClick={() => {
+                  const next = !techValidated;
+                  setTechValidated(next);
+                  saveCpmState(attendances, next, bids);
+                }}
                 className={`inline-flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-semibold ${
                   techValidated
                     ? 'bg-gov-emerald text-white'

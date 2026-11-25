@@ -68,6 +68,10 @@ def main() -> int:
         assert pdf_resp.status == 200, f"PDF manual status {pdf_resp.status}"
         assert len(pdf_resp.body()) > 50000, "PDF manual unexpectedly small"
 
+        # 6. Page Légale (Mentions Légales & CGU)
+        page.goto(f"{BASE_URL}/legal", wait_until="networkidle")
+        page.wait_for_selector("text=Conditions Générales d’Utilisation", timeout=8000)
+
         browser.close()
         print("E2E SMOKE TEST SUITE PASSED (Login, Supabase Projects/Deliverables, GED Auto-Seal, Document Factory Studio Header, 11-Module CMS, License Relances, Grand Reset/Demo Toggle, Humanoid Robot & PDF Manual)!")
         return 0

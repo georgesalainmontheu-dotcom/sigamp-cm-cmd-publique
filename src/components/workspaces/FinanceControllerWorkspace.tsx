@@ -3,14 +3,17 @@
 import {
   Calculator,
   CheckCircle2,
+  Cloud,
   Landmark,
   Printer,
+  Save,
   ShieldAlert,
   ShieldCheck,
 } from 'lucide-react';
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { calculateDecompte } from '../../lib/domain/billingEngine';
 import { evaluateSecuritiesExpiry } from '../../lib/domain/exceptionsEngine';
+import { useWorkspacePersistence } from '../../lib/hooks/useWorkspacePersistence';
 import {
   generateOfficialPdf,
   type GeneratedOfficialPdfResult,
@@ -63,6 +66,39 @@ export function FinanceControllerWorkspace({ profile }: { profile: ActiveRolePro
   const [weatherDays, setWeatherDays] = useState(4);
   const [pdfResult, setPdfResult] = useState<GeneratedOfficialPdfResult | null>(null);
 
+  const { loadedState, syncBadge, isSaving, persistState } = useWorkspacePersistence<{
+    visaQueue: VisaQueueItem[];
+    contractType: ContractType;
+    contractTtc: number;
+    grossHt: number;
+    fiscalRegime: FiscalRegime;
+    delayDays: number;
+  }>(profile.entityId, 'FINANCE_CF');
+
+  useEffect(() => {
+    if (!loadedState) return;
+    if (Array.isArray(loadedState.visaQueue)) setVisaQueue(loadedState.visaQueue);
+    if (loadedState.contractType) setContractType(loadedState.contractType);
+    if (typeof loadedState.contractTtc === 'number') setContractTtc(loadedState.contractTtc);
+    if (typeof loadedState.grossHt === 'number') setGrossHt(loadedState.grossHt);
+    if (loadedState.fiscalRegime) setFiscalRegime(loadedState.fiscalRegime);
+    if (typeof loadedState.delayDays === 'number') setDelayDays(loadedState.delayDays);
+  }, [loadedState]);
+
+  const saveFinanceState = (nextQueue = visaQueue) => {
+    void persistState(
+      {
+        visaQueue: nextQueue,
+        contractType,
+        contractTtc,
+        grossHt,
+        fiscalRegime,
+        delayDays,
+      },
+      'SAVE_FINANCE_CF'
+    );
+  };
+
   const decompte = useMemo(
     () =>
       calculateDecompte({
@@ -90,18 +126,19 @@ export function FinanceControllerWorkspace({ profile }: { profile: ActiveRolePro
   );
 
   const grantVisa = (id: string) => {
-    setVisaQueue((prev) =>
-      prev.map((q) => {
-        if (q.id !== id) return q;
-        return {
-          ...q,
-          status:
-            q.budgetAvailableFcfa >= q.amountFcfa
-              ? 'VISA_ACCORDE'
-              : 'REJETE_INSUFFISANCE',
-        };
-      })
-    );
+    const nextQueue = visaQueue.map((q) => {
+      if (q.id !== id) return q;
+      return {
+        ...q,
+        status: (
+          q.budgetAvailableFcfa >= q.amountFcfa
+            ? 'VISA_ACCORDE'
+            : 'REJETE_INSUFFISANCE'
+        ) as VisaQueueItem['status'],
+      };
+    });
+    setVisaQueue(nextQueue);
+    saveFinanceState(nextQueue);
   };
 
   const handlePrintDecomptePdf = async () => {
@@ -195,6 +232,25 @@ export function FinanceControllerWorkspace({ profile }: { profile: ActiveRolePro
 
   return (
     <div className="space-y-6">
+      <div className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-xs shadow-sm">
+        <span className="inline-flex items-center gap-1.5 font-semibold text-gov-navy">
+          <Cloud className="h-4 w-4 text-emerald-600" />
+          Persistance Serveur Finance &amp; Contrôle :{' '}
+          <span className="font-normal text-slate-600">
+            {syncBadge ?? 'Synchronisation prête'}
+          </span>
+        </span>
+        <button
+          type="button"
+          disabled={isSaving}
+          onClick={() => saveFinanceState()}
+          className="inline-flex items-center gap-1.5 rounded-lg bg-gov-navy px-3 py-1.5 font-semibold text-white hover:bg-gov-navyLight disabled:opacity-60"
+        >
+          <Save className="h-3.5 w-3.5 text-gov-gold" />
+          {isSaving ? 'Sauvegarde...' : 'Sauvegarder Supabase'}
+        </button>
+      </div>
+
       {securitiesAlert.alerts.length > 0 && (
         <div className="rounded-2xl border border-amber-300 bg-amber-50 p-4 text-xs text-amber-950 shadow-sm">
           <div className="flex flex-wrap items-center justify-between gap-2">

@@ -2,6 +2,7 @@
 
 import {
   CheckCircle2,
+  Cloud,
   FileArchive,
   FileSearch,
   Gavel,
@@ -9,7 +10,8 @@ import {
   UploadCloud,
   Wallet,
 } from 'lucide-react';
-import { useState, type ChangeEvent } from 'react';
+import { useEffect, useMemo, useState, type ChangeEvent } from 'react';
+import { useWorkspacePersistence } from '../../lib/hooks/useWorkspacePersistence';
 import {
   getOfflineDb,
   queueScannedAttachment,
@@ -45,6 +47,38 @@ export function BidderPortalWorkspace({ profile }: { profile: ActiveRoleProfile 
   const [submissionStatus, setSubmissionStatus] = useState<string | null>(null);
   const [disputeMotif, setDisputeMotif] = useState('');
   const [disputeSent, setDisputeSent] = useState<string | null>(null);
+  const [submittedBids, setSubmittedBids] = useState<
+    Array<{ id: string; tenderNumber: string; submittedAt: string; attachmentsCount: number }>
+  >([]);
+  const [filedDisputes, setFiledDisputes] = useState<
+    Array<{ id: string; tenderNumber: string; grounds: string; filedAt: string }>
+  >([]);
+
+  const { loadedState, openTenders, syncBadge, persistState } = useWorkspacePersistence<{
+    submittedBids: typeof submittedBids;
+    filedDisputes: typeof filedDisputes;
+  }>(profile.entityId, 'SOUMISSIONNAIRE');
+
+  useEffect(() => {
+    if (!loadedState) return;
+    if (Array.isArray(loadedState.submittedBids)) setSubmittedBids(loadedState.submittedBids);
+    if (Array.isArray(loadedState.filedDisputes)) setFiledDisputes(loadedState.filedDisputes);
+  }, [loadedState]);
+
+  const displayedTenders = useMemo(() => {
+    if (openTenders.length > 0) {
+      return openTenders.map((p) => ({
+        id: p.id,
+        number: p.code,
+        entity: profile.entityName,
+        title: p.title,
+        budgetTtc: Number(p.estimated_amount_ttc || 0),
+        deadline: 'Selon calendrier DAO',
+        bidBond: Math.round(Number(p.estimated_amount_ttc || 0) * 0.02),
+      }));
+    }
+    return OPEN_TENDERS;
+  }, [openTenders, profile.entityName]);
 
   const handleFileUpload = async (e: ChangeEvent<HTMLInputElement>) => {
     const files = e.target.files;
@@ -67,16 +101,29 @@ export function BidderPortalWorkspace({ profile }: { profile: ActiveRoleProfile 
 
   const handleSubmitBid = async () => {
     const db = getOfflineDb();
+    const bidId = `bid-${Date.now()}`;
+    const submittedAt = new Date().toISOString();
     await saveOfflineRecord(db, 'bids', {
-      id: `bid-${Date.now()}`,
+      id: bidId,
       entity_id: profile.entityId,
       tender_number: selectedTender,
       supplier_name: profile.fullName,
       attachments_count: attachments.length,
-      submitted_at: new Date().toISOString(),
+      submitted_at: submittedAt,
     });
+    const nextBids = [
+      {
+        id: bidId,
+        tenderNumber: selectedTender,
+        submittedAt,
+        attachmentsCount: attachments.length,
+      },
+      ...submittedBids,
+    ];
+    setSubmittedBids(nextBids);
+    void persistState({ submittedBids: nextBids, filedDisputes }, 'SUBMIT_BID');
     setSubmissionStatus(
-      `Soumission horodatée pour le DAO ${selectedTender} avec ${attachments.length} pièce(s) compressée(s) et mise(s) en file de synchronisation.`
+      `Soumission horodatée (${bidId}) pour le DAO ${selectedTender} avec ${attachments.length} pièce(s), enregistrée sur Supabase et en cache hors-ligne.`
     );
   };
 
@@ -84,22 +131,44 @@ export function BidderPortalWorkspace({ profile }: { profile: ActiveRoleProfile 
     if (!disputeMotif.trim()) return;
     const db = getOfflineDb();
     const disputeId = `REC-${Date.now()}`;
+    const filedAt = new Date().toISOString();
     await saveOfflineRecord(db, 'disputes', {
       id: disputeId,
       entity_id: profile.entityId,
       tender_number: selectedTender,
       claimant_name: profile.fullName,
       grounds_summary: disputeMotif,
-      filed_at: new Date().toISOString(),
+      filed_at: filedAt,
     });
+    const nextDisputes = [
+      {
+        id: disputeId,
+        tenderNumber: selectedTender,
+        grounds: disputeMotif,
+        filedAt,
+      },
+      ...filedDisputes,
+    ];
+    setFiledDisputes(nextDisputes);
+    void persistState({ submittedBids, filedDisputes: nextDisputes }, 'FILE_BIDDER_DISPUTE');
     setDisputeSent(
-      `Recours ${disputeId} enregistré. Le contrôle du délai de 5 jours ouvrables et l'effet suspensif sont déclenchés côté Maître d'Ouvrage.`
+      `Recours ${disputeId} enregistré sur Supabase. Le contrôle du délai de 5 jours ouvrables et l'effet suspensif sont déclenchés côté Maître d'Ouvrage.`
     );
     setDisputeMotif('');
   };
 
   return (
     <div className="space-y-6">
+      <div className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-xs shadow-sm">
+        <span className="inline-flex items-center gap-1.5 font-semibold text-gov-navy">
+          <Cloud className="h-4 w-4 text-emerald-600" />
+          Portail Soumissionnaire connecté Supabase :{' '}
+          <span className="font-normal text-slate-600">
+            {syncBadge ?? 'Synchronisation prête'} · {submittedBids.length} offre(s) déposée(s)
+          </span>
+        </span>
+      </div>
+
       {/* Consultation des AAO */}
       <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
         <h2 className="flex items-center gap-2 text-sm font-bold text-gov-navy">
@@ -107,7 +176,7 @@ export function BidderPortalWorkspace({ profile }: { profile: ActiveRoleProfile 
           Avis d&apos;Appels d&apos;Offres &amp; Cotations Ouverts
         </h2>
         <div className="mt-4 grid grid-cols-1 gap-4 md:grid-cols-2 text-xs">
-          {OPEN_TENDERS.map((t) => (
+          {displayedTenders.map((t) => (
             <div
               key={t.id}
               onClick={() => setSelectedTender(t.number)}

@@ -1,6 +1,7 @@
 'use client';
 
 import { ShieldCheck, X } from 'lucide-react';
+import Link from 'next/link';
 import { useState } from 'react';
 
 export const TIT_CS_METADATA = {
@@ -108,6 +109,12 @@ export function TitCsBrandFooter({
             >
               Mentions de licence &amp; Intégrité
             </button>
+            <Link
+              href="/legal"
+              className="rounded-lg border border-slate-200 bg-slate-50 px-2.5 py-1 font-medium text-slate-700 transition hover:border-[#0A1F3D] hover:text-[#0A1F3D]"
+            >
+              CGU &amp; Confidentialité
+            </Link>
             <a
               href={TIT_CS_METADATA.website}
               target="_blank"

@@ -3,14 +3,17 @@
 import {
   AlertOctagon,
   Clock,
+  Cloud,
   Gavel,
   Loader2,
   Lock,
   Printer,
+  Save,
   ShieldAlert,
   Sparkles,
 } from 'lucide-react';
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
+import { useWorkspacePersistence } from '../../lib/hooks/useWorkspacePersistence';
 import {
   generateOfficialPdf,
   type GeneratedOfficialPdfResult,
@@ -36,6 +39,52 @@ export function DisputeWorkspace({ profile }: { profile: ActiveRoleProfile }) {
   const [auditResult, setAuditResult] = useState<DisputeAuditResult | null>(null);
   const [pdfResult, setPdfResult] = useState<GeneratedOfficialPdfResult | null>(null);
   const [activeDocView, setActiveDocView] = useState<'MO' | 'ARMP'>('ARMP');
+
+  const { loadedState, syncBadge, isSaving, persistState } = useWorkspacePersistence<{
+    stage: DisputeStage;
+    filedAtIso: string;
+    referenceEventAtIso: string;
+    priorMoVerified: boolean;
+    appealBondRequired: boolean;
+    appealBondRef: string;
+    auditResult: DisputeAuditResult | null;
+  }>(profile.entityId, 'CONTENTIEUX');
+
+  useEffect(() => {
+    if (!loadedState) return;
+    if (loadedState.stage) setStage(loadedState.stage);
+    if (loadedState.filedAtIso) setFiledAtIso(loadedState.filedAtIso);
+    if (loadedState.referenceEventAtIso) {
+      setReferenceEventAtIso(loadedState.referenceEventAtIso);
+    }
+    if (typeof loadedState.priorMoVerified === 'boolean') {
+      setPriorMoVerified(loadedState.priorMoVerified);
+    }
+    if (typeof loadedState.appealBondRequired === 'boolean') {
+      setAppealBondRequired(loadedState.appealBondRequired);
+    }
+    if (typeof loadedState.appealBondRef === 'string') {
+      setAppealBondRef(loadedState.appealBondRef);
+    }
+    if (loadedState.auditResult !== undefined) {
+      setAuditResult(loadedState.auditResult);
+    }
+  }, [loadedState]);
+
+  const saveDisputeState = (nextAudit: DisputeAuditResult | null = auditResult) => {
+    void persistState(
+      {
+        stage,
+        filedAtIso,
+        referenceEventAtIso,
+        priorMoVerified,
+        appealBondRequired,
+        appealBondRef,
+        auditResult: nextAudit,
+      },
+      'SAVE_DISPUTE_CASE'
+    );
+  };
 
   const runDisputeAudit = async () => {
     setLoading(true);
@@ -163,6 +212,7 @@ export function DisputeWorkspace({ profile }: { profile: ActiveRoleProfile }) {
       }
       const json = (await res.json()) as DisputeAuditResult;
       setAuditResult(json);
+      saveDisputeState(json);
     } finally {
       setLoading(false);
     }
@@ -201,6 +251,25 @@ export function DisputeWorkspace({ profile }: { profile: ActiveRoleProfile }) {
 
   return (
     <div className="space-y-6">
+      <div className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-xs shadow-sm">
+        <span className="inline-flex items-center gap-1.5 font-semibold text-gov-navy">
+          <Cloud className="h-4 w-4 text-emerald-600" />
+          Persistance Serveur Contentieux &amp; ARMP :{' '}
+          <span className="font-normal text-slate-600">
+            {syncBadge ?? 'Synchronisation prête'}
+          </span>
+        </span>
+        <button
+          type="button"
+          disabled={isSaving}
+          onClick={() => saveDisputeState()}
+          className="inline-flex items-center gap-1.5 rounded-lg bg-gov-navy px-3 py-1.5 font-semibold text-white hover:bg-gov-navyLight disabled:opacity-60"
+        >
+          <Save className="h-3.5 w-3.5 text-gov-gold" />
+          {isSaving ? 'Sauvegarde...' : 'Sauvegarder Supabase'}
+        </button>
+      </div>
+
       {/* Registre des saisines & Simulateur d'Audit */}
       <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
         <div className="flex flex-wrap items-center justify-between gap-2">

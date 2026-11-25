@@ -289,6 +289,12 @@ export default function LoginPage() {
               >
                 Vérifier un Scellé QR / SHA-256
               </Link>
+              <Link
+                href="/legal"
+                className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-1.5 font-medium text-gov-navy hover:bg-slate-100"
+              >
+                Mentions Légales &amp; CGU
+              </Link>
             </div>
           </div>
         </div>
