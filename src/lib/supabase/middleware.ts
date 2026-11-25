@@ -5,6 +5,8 @@ const PUBLIC_PATH_PREFIXES = [
   '/login',
   '/avis',
   '/verify',
+  '/legal',
+  '/docs',
   '/api/',
   '/_next',
   '/sw.js',
