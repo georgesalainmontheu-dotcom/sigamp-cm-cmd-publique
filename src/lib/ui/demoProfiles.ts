@@ -32,6 +32,8 @@ export interface ActiveRoleProfile {
   licenseExpiresAt?: string | null;
   primaryColor?: string;
   accentColor?: string;
+  logoUrl?: string;
+  logoSvg?: string;
 }
 
 export const ROLE_PROFILES: ActiveRoleProfile[] = [

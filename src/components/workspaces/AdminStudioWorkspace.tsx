@@ -11,10 +11,17 @@ import {
   Eye,
   EyeOff,
   History,
+  ImagePlus,
   KeyRound,
   Layers,
+  Maximize2,
+  Minimize2,
   Monitor,
   Palette,
+  PanelLeftClose,
+  PanelLeftOpen,
+  PanelRightClose,
+  PanelRightOpen,
   Plus,
   RefreshCw,
   RotateCcw,
@@ -26,6 +33,8 @@ import {
   Trash2,
   UserCheck,
   UserX,
+  ZoomIn,
+  ZoomOut,
 } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import {
@@ -72,6 +81,8 @@ interface AdminEntityRow {
   municipality: string | null;
   primary_color?: string;
   accent_color?: string;
+  logo_url?: string | null;
+  logo_svg?: string | null;
   header_timbre_text?: string;
   footer_legal_text?: string;
   studio_config?: {
@@ -115,6 +126,13 @@ export function AdminStudioWorkspace({
   const [section, setSection] = useState<StudioSectionId>('STUDIO_FIGMA');
   const [viewport, setViewport] = useState<'DESKTOP' | 'TABLET' | 'MOBILE'>('DESKTOP');
   const [editMode, setEditMode] = useState<'EDIT' | 'PREVIEW'>('EDIT');
+  const [showLeftPanel, setShowLeftPanel] = useState<boolean>(true);
+  const [showRightPanel, setShowRightPanel] = useState<boolean>(true);
+  const [canvasFullScreen, setCanvasFullScreen] = useState<boolean>(false);
+  const [canvasZoom, setCanvasZoom] = useState<85 | 100 | 115>(100);
+  const [sampleDocType, setSampleDocType] = useState<
+    'STANDARD' | 'DECISION' | 'BORDEREAU' | 'ORDRE_SERVICE'
+  >('STANDARD');
   const [statusBanner, setStatusBanner] = useState<string | null>(null);
   const [errorBanner, setErrorBanner] = useState<string | null>(null);
 
@@ -159,6 +177,8 @@ export function AdminStudioWorkspace({
     municipality: profile.city,
     primaryColor: profile.primaryColor ?? '#0A1F3D',
     accentColor: profile.accentColor ?? '#D4AF37',
+    logoUrl: profile.logoUrl,
+    logoSvg: profile.logoSvg,
     headerTimbreText: 'RÉPUBLIQUE DU CAMEROUN\nPaix - Travail - Patrie',
     footerLegalText:
       '© 2026 Joël Tchassom & TIT-Consulting Solutions (TIT-CS) — Plateforme SIGAMP-CM',
@@ -283,6 +303,8 @@ export function AdminStudioWorkspace({
             municipality: cur.municipality ?? 'Yaoundé',
             primaryColor: cur.primary_color ?? '#0A1F3D',
             accentColor: cur.accent_color ?? '#D4AF37',
+            logoUrl: cur.logo_url ?? undefined,
+            logoSvg: cur.logo_svg ?? undefined,
             headerTimbreText:
               cur.header_timbre_text ?? 'RÉPUBLIQUE DU CAMEROUN\nPaix - Travail - Patrie',
             footerLegalText:
@@ -292,7 +314,19 @@ export function AdminStudioWorkspace({
             compactHeader: Boolean(cur.studio_config?.compactHeader),
           }));
           if (cur.studio_config?.blocks && cur.studio_config.blocks.length > 0) {
-            setBlocks(cur.studio_config.blocks);
+            const hydratedBlocks = cur.studio_config.blocks.map((blk) => {
+              const fallback = DEFAULT_STUDIO_BLOCKS.find((d) => d.id === blk.id);
+              return {
+                ...blk,
+                customText:
+                  blk.customText && blk.customText.trim().length > 0
+                    ? blk.customText
+                    : fallback?.customText ?? '',
+              };
+            });
+            setBlocks(hydratedBlocks);
+          } else {
+            setBlocks(DEFAULT_STUDIO_BLOCKS);
           }
           if (Array.isArray(cur.studio_versions)) {
             setVersions(cur.studio_versions);
@@ -711,12 +745,123 @@ export function AdminStudioWorkspace({
     }
   };
 
+  const handleLogoFileChange = async (file: File | null) => {
+    if (!file) return;
+    setErrorBanner(null);
+
+    if (file.size > 4 * 1024 * 1024) {
+      setErrorBanner('Le fichier logo dépasse 4 Mo. Veuillez choisir une image plus légère.');
+      return;
+    }
+
+    if (file.type === 'image/svg+xml' || file.name.toLowerCase().endsWith('.svg')) {
+      const rawSvg = await file.text();
+      const safeSvg = rawSvg
+        .replace(/<script[\s\S]*?>[\s\S]*?<\/script>/gi, '')
+        .replace(/\son\w+="[^"]*"/gi, '')
+        .replace(/\son\w+='[^']*'/gi, '');
+      setIdentity((prev) => ({
+        ...prev,
+        logoSvg: safeSvg,
+        logoUrl: undefined,
+      }));
+      setStatusBanner(
+        `Logo SVG « ${file.name} » chargé dans le Canvas. Cliquez sur « Publier / Appliquer immédiatement » pour l'enregistrer.`
+      );
+      return;
+    }
+
+    if (!file.type.startsWith('image/')) {
+      setErrorBanner('Format non supporté. Utilisez un fichier PNG, JPG, WebP ou SVG.');
+      return;
+    }
+
+    try {
+      const dataUrl = await new Promise<string>((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => {
+          const img = new Image();
+          img.onload = () => {
+            const maxDim = 256;
+            const scale = Math.min(1, maxDim / Math.max(img.width, img.height));
+            const targetW = Math.max(1, Math.round(img.width * scale));
+            const targetH = Math.max(1, Math.round(img.height * scale));
+            const canvas = document.createElement('canvas');
+            canvas.width = targetW;
+            canvas.height = targetH;
+            const ctx = canvas.getContext('2d');
+            if (!ctx) {
+              reject(new Error('Canvas context unavailable'));
+              return;
+            }
+            ctx.clearRect(0, 0, targetW, targetH);
+            ctx.drawImage(img, 0, 0, targetW, targetH);
+            resolve(canvas.toDataURL('image/png', 0.92));
+          };
+          img.onerror = () => reject(new Error('Image load failed'));
+          img.src = String(reader.result);
+        };
+        reader.onerror = () => reject(new Error('File read failed'));
+        reader.readAsDataURL(file);
+      });
+
+      setIdentity((prev) => ({
+        ...prev,
+        logoUrl: dataUrl,
+        logoSvg: undefined,
+      }));
+      setStatusBanner(
+        `Logo « ${file.name} » optimisé et chargé dans le Canvas. Cliquez sur « Publier / Appliquer immédiatement » pour l'enregistrer.`
+      );
+    } catch {
+      setErrorBanner('Impossible de lire ce fichier image. Vérifiez le format (PNG/JPG/WebP/SVG).');
+    }
+  };
+
+  const SAMPLE_BODY_PRESETS: Record<
+    'STANDARD' | 'DECISION' | 'BORDEREAU' | 'ORDRE_SERVICE',
+    string
+  > = {
+    STANDARD: '',
+    DECISION:
+      "DÉCISION D'ATTRIBUTION N° 042/{{fiscal_year}}/{{entity.code}}\n" +
+      'Portant attribution du marché relatif aux travaux de réhabilitation des infrastructures publiques de {{city}}.\n\n' +
+      'Vu le Décret N° 2018/366 du 20 juin 2018 portant Code des Marchés Publics ;\n' +
+      'Vu la proposition motivée de la Commission de Passation des Marchés compétente ;\n\n' +
+      "Article 1er : Le marché objet de l'Appel d'Offres National Ouvert est attribué au soumissionnaire retenu par {{entity.name}} pour un montant TTC conforme au budget validé.\n" +
+      'Article 2 : La présente décision sera enregistrée, publiée au Journal des Marchés Publics (ARMP) et communiquée partout où besoin sera.',
+    BORDEREAU:
+      'BORDEREAU DE TRANSMISSION N° 018/{{fiscal_year}}/{{entity.code}}\n' +
+      "Destinataire : Monsieur le Délégué Départemental des Marchés Publics / Autorité Contractante ({{city}})\n\n" +
+      'Pièces transmises pour visa et contrôle de régularité :\n' +
+      "1. Dossier d'Appel d'Offres (DAO) complet avec CCTP et Cadre du Devis Estimatif ;\n" +
+      '2. Procès-Verbal de la Commission Interne et rapport de la Sous-Commission d’Analyse ;\n' +
+      '3. Projet de marché paraphé et attestation de disponibilité des crédits budgétaires.',
+    ORDRE_SERVICE:
+      'ORDRE DE SERVICE N° 001/{{fiscal_year}}/{{entity.code}}\n' +
+      'Prescrivant le démarrage effectif des prestations — Exercice {{fiscal_year}}.\n\n' +
+      "Il est prescrit à l'entreprise titulaire de démarrer les travaux dès notification du présent Ordre de Service, conformément au cahier des charges et au planning d'exécution approuvé par l'Ingénieur du Marché à {{city}}.",
+  };
+
+  const leftOpen = !canvasFullScreen && showLeftPanel;
+  const rightOpen =
+    !canvasFullScreen &&
+    showRightPanel &&
+    (section === 'STUDIO_FIGMA' || section === 'LICENSES_SALES');
+
+  const centerColClass =
+    leftOpen && rightOpen
+      ? 'lg:col-span-6'
+      : leftOpen || rightOpen
+        ? 'lg:col-span-9'
+        : 'lg:col-span-12';
+
   const canvasWidthClass =
     viewport === 'MOBILE'
-      ? 'max-w-[380px]'
+      ? 'max-w-[400px]'
       : viewport === 'TABLET'
-        ? 'max-w-[680px]'
-        : 'max-w-full';
+        ? 'max-w-[740px]'
+        : 'max-w-[920px]';
 
   return (
     <div className="space-y-4">
@@ -877,10 +1022,11 @@ export function AdminStudioWorkspace({
         </div>
       )}
 
-      {/* LAYOUT 3 ZONES INSPIRÉ DE FIGMA & WORDPRESS/STRAPI */}
+      {/* LAYOUT 3 ZONES ADAPTATIF STYLE FIGMA & WORDPRESS/STRAPI */}
       <div className="grid grid-cols-1 gap-4 lg:grid-cols-12">
         {/* 2. PANNEAU GAUCHE : EXPLORATEUR DE CALQUES & MODULES */}
-        <aside className="space-y-3 rounded-2xl border border-slate-200 bg-white p-3.5 shadow-sm lg:col-span-3">
+        {leftOpen && (
+          <aside className="space-y-3 rounded-2xl border border-slate-200 bg-white p-3.5 shadow-sm lg:col-span-3">
           <div className="text-[11px] font-bold uppercase tracking-wider text-slate-400">
             Explorateur &amp; Modules CMS
           </div>
@@ -968,37 +1114,142 @@ export function AdminStudioWorkspace({
               </div>
             </div>
           )}
-        </aside>
+          </aside>
+        )}
 
-        {/* 3. ZONE CENTRALE : CANVAS EN DIRECT (LIVE PREVIEW RESPONSIVE) */}
-        <section className="space-y-3 rounded-2xl border border-slate-200 bg-slate-100/80 p-4 shadow-sm lg:col-span-6">
-          <div className="flex flex-wrap items-center justify-between gap-2">
-            <span className="text-xs font-bold text-[#0A1F3D]">
-              Canvas Temps Réel — {identity.entityName}
-            </span>
-            <div className="flex items-center gap-1 rounded-xl border border-slate-200 bg-white p-1">
-              {[
-                { id: 'DESKTOP', icon: Monitor, label: 'Bureau' },
-                { id: 'TABLET', icon: Tablet, label: 'Tablette' },
-                { id: 'MOBILE', icon: Smartphone, label: 'Mobile' },
-              ].map((vp) => {
-                const Icon = vp.icon;
-                return (
-                  <button
-                    key={vp.id}
-                    type="button"
-                    onClick={() => setViewport(vp.id as typeof viewport)}
-                    className={`inline-flex items-center gap-1 rounded-lg px-2 py-1 text-[11px] font-semibold ${
-                      viewport === vp.id
-                        ? 'bg-[#0A1F3D] text-white'
-                        : 'text-slate-600 hover:bg-slate-100'
-                    }`}
+        {/* 3. ZONE CENTRALE : CANVAS EN DIRECT (LIVE PREVIEW RESPONSIVE & HAUTE LISIBILITÉ) */}
+        <section
+          className={`space-y-3 rounded-2xl border border-slate-200 bg-slate-100/90 p-4 shadow-sm ${centerColClass}`}
+        >
+          <div className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-slate-200 bg-white px-3 py-2">
+            <div className="flex flex-wrap items-center gap-1.5">
+              <button
+                type="button"
+                onClick={() => {
+                  setCanvasFullScreen(false);
+                  setShowLeftPanel((v) => !v);
+                }}
+                title={showLeftPanel ? 'Masquer Explorateur' : 'Afficher Explorateur'}
+                className="inline-flex items-center gap-1 rounded-lg border border-slate-200 px-2 py-1 text-[11px] font-semibold text-slate-700 hover:bg-slate-100"
+              >
+                {leftOpen ? (
+                  <PanelLeftClose className="h-3.5 w-3.5 text-[#0A1F3D]" />
+                ) : (
+                  <PanelLeftOpen className="h-3.5 w-3.5 text-[#0A1F3D]" />
+                )}
+                <span className="hidden sm:inline">Explorateur</span>
+              </button>
+
+              {(section === 'STUDIO_FIGMA' || section === 'LICENSES_SALES') && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setCanvasFullScreen(false);
+                    setShowRightPanel((v) => !v);
+                  }}
+                  title={showRightPanel ? 'Masquer Inspecteur' : 'Afficher Inspecteur'}
+                  className="inline-flex items-center gap-1 rounded-lg border border-slate-200 px-2 py-1 text-[11px] font-semibold text-slate-700 hover:bg-slate-100"
+                >
+                  {rightOpen ? (
+                    <PanelRightClose className="h-3.5 w-3.5 text-[#0A1F3D]" />
+                  ) : (
+                    <PanelRightOpen className="h-3.5 w-3.5 text-[#0A1F3D]" />
+                  )}
+                  <span className="hidden sm:inline">Inspecteur</span>
+                </button>
+              )}
+
+              <button
+                type="button"
+                onClick={() => setCanvasFullScreen((v) => !v)}
+                className={`inline-flex items-center gap-1 rounded-lg border px-2 py-1 text-[11px] font-semibold ${
+                  canvasFullScreen
+                    ? 'border-[#0A1F3D] bg-[#0A1F3D] text-white'
+                    : 'border-slate-200 text-slate-700 hover:bg-slate-100'
+                }`}
+              >
+                {canvasFullScreen ? (
+                  <Minimize2 className="h-3.5 w-3.5" />
+                ) : (
+                  <Maximize2 className="h-3.5 w-3.5" />
+                )}
+                <span>{canvasFullScreen ? 'Quitter Plein Écran' : 'Plein Écran'}</span>
+              </button>
+
+              <span className="ml-1 hidden text-xs font-bold text-[#0A1F3D] xl:inline">
+                · {identity.entityName}
+              </span>
+            </div>
+
+            <div className="flex flex-wrap items-center gap-1.5">
+              {section === 'STUDIO_FIGMA' && (
+                <>
+                  <select
+                    value={sampleDocType}
+                    onChange={(e) =>
+                      setSampleDocType(e.target.value as typeof sampleDocType)
+                    }
+                    title="Modèle d'acte affiché dans le bloc Corps"
+                    className="rounded-lg border border-slate-200 bg-slate-50 px-2 py-1 text-[11px] font-semibold text-[#0A1F3D]"
                   >
-                    <Icon className="h-3 w-3" />
-                    {vp.label}
-                  </button>
-                );
-              })}
+                    <option value="STANDARD">Acte : Notification Standard</option>
+                    <option value="DECISION">Acte : Décision d’Attribution</option>
+                    <option value="BORDEREAU">Acte : Bordereau Transmission</option>
+                    <option value="ORDRE_SERVICE">Acte : Ordre de Service</option>
+                  </select>
+
+                  <div className="flex items-center gap-0.5 rounded-lg border border-slate-200 bg-slate-50 p-0.5">
+                    <button
+                      type="button"
+                      onClick={() =>
+                        setCanvasZoom((z) => (z === 115 ? 100 : 85))
+                      }
+                      title="Réduire le zoom"
+                      className="rounded p-1 text-slate-600 hover:bg-white"
+                    >
+                      <ZoomOut className="h-3.5 w-3.5" />
+                    </button>
+                    <span className="px-1.5 text-[11px] font-bold text-[#0A1F3D]">
+                      {canvasZoom}%
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() =>
+                        setCanvasZoom((z) => (z === 85 ? 100 : 115))
+                      }
+                      title="Agrandir le zoom"
+                      className="rounded p-1 text-slate-600 hover:bg-white"
+                    >
+                      <ZoomIn className="h-3.5 w-3.5" />
+                    </button>
+                  </div>
+                </>
+              )}
+
+              <div className="flex items-center gap-0.5 rounded-lg border border-slate-200 bg-slate-50 p-0.5">
+                {[
+                  { id: 'DESKTOP', icon: Monitor, label: 'Bureau' },
+                  { id: 'TABLET', icon: Tablet, label: 'Tablette' },
+                  { id: 'MOBILE', icon: Smartphone, label: 'Mobile' },
+                ].map((vp) => {
+                  const Icon = vp.icon;
+                  return (
+                    <button
+                      key={vp.id}
+                      type="button"
+                      onClick={() => setViewport(vp.id as typeof viewport)}
+                      className={`inline-flex items-center gap-1 rounded-md px-2 py-1 text-[11px] font-semibold ${
+                        viewport === vp.id
+                          ? 'bg-[#0A1F3D] text-white'
+                          : 'text-slate-600 hover:bg-white'
+                      }`}
+                    >
+                      <Icon className="h-3 w-3" />
+                      <span className="hidden md:inline">{vp.label}</span>
+                    </button>
+                  );
+                })}
+              </div>
             </div>
           </div>
 
@@ -1087,26 +1338,40 @@ export function AdminStudioWorkspace({
               </div>
             )}
 
-            {/* STUDIO FIGMA / CMS LIVE CANVAS */}
+            {/* STUDIO FIGMA / CMS LIVE CANVAS (HAUTE LISIBILITÉ A4) */}
             {section === 'STUDIO_FIGMA' && (
               <div
-                className={`rounded-2xl border bg-white p-6 shadow-md ${
+                className={`rounded-2xl border-2 bg-white p-6 sm:p-10 shadow-lg transition-all ${
                   identity.typography === 'serif' ? 'font-serif' : 'font-sans'
                 }`}
-                style={{ borderColor: identity.accentColor }}
+                style={{
+                  borderColor: identity.accentColor,
+                  fontSize:
+                    canvasZoom === 115
+                      ? '1.08rem'
+                      : canvasZoom === 85
+                        ? '0.9rem'
+                        : '1rem',
+                }}
               >
                 <div
-                  className="mb-4 h-2 w-full rounded-full"
+                  className="mb-6 h-2 w-full rounded-full"
                   style={{
                     background: `linear-gradient(90deg, ${identity.primaryColor}, ${identity.accentColor})`,
                   }}
                 />
-                <div className="space-y-3">
+
+                <div className="space-y-4">
                   {[...blocks]
                     .sort((a, b) => a.order - b.order)
                     .filter((b) => b.visible)
                     .map((blk) => {
-                      const rendered = renderStudioTemplate(blk.customText ?? '', {
+                      const rawTemplate =
+                        blk.id === 'blk_body' && sampleDocType !== 'STANDARD'
+                          ? SAMPLE_BODY_PRESETS[sampleDocType]
+                          : blk.customText ?? '';
+
+                      const rendered = renderStudioTemplate(rawTemplate, {
                         entityName: identity.entityName,
                         entityCode: identity.entityCode,
                         city: identity.municipality,
@@ -1116,36 +1381,252 @@ export function AdminStudioWorkspace({
                         headerTimbreText: identity.headerTimbreText,
                         footerLegalText: identity.footerLegalText,
                       });
+
                       const isSel = blk.id === selectedBlock.id && editMode === 'EDIT';
+                      const lines = rendered
+                        .split('\n')
+                        .map((l) => l.trimEnd())
+                        .filter((l, i, arr) => l !== '' || (arr[i - 1] ?? '') !== '');
+
                       return (
                         <div
                           key={blk.id}
                           onClick={() => setSelectedBlockId(blk.id)}
-                          className={`cursor-pointer rounded-xl p-3 transition ${
+                          className={`group relative cursor-pointer rounded-xl px-4 py-3.5 transition ${
                             isSel
-                              ? 'ring-2 ring-[#0A1F3D] bg-slate-50'
+                              ? 'bg-slate-50/90 ring-2 ring-[#0A1F3D]'
                               : 'hover:bg-slate-50/70'
                           }`}
                         >
-                          {blk.id === 'blk_entity' && (
-                            <div className="mb-1 flex items-center gap-2">
-                              <div
-                                className="flex h-8 w-8 items-center justify-center rounded-lg text-[10px] font-bold text-white"
-                                style={{ backgroundColor: identity.primaryColor }}
-                              >
-                                {identity.entityCode.slice(0, 4)}
-                              </div>
-                              <span
-                                className="text-xs font-bold uppercase"
-                                style={{ color: identity.primaryColor }}
-                              >
-                                {identity.entityType}
+                          {editMode === 'EDIT' && (
+                            <div className="mb-1.5 flex items-center justify-between text-[10px] font-sans uppercase tracking-wider text-slate-400">
+                              <span>
+                                Bloc {blk.order} · {blk.label}
                               </span>
+                              {isSel && (
+                                <span className="rounded bg-[#0A1F3D] px-1.5 py-0.5 font-semibold text-[#D4AF37]">
+                                  Actif
+                                </span>
+                              )}
                             </div>
                           )}
-                          <pre className="whitespace-pre-wrap font-inherit text-xs leading-relaxed text-slate-800">
-                            {rendered}
-                          </pre>
+
+                          {/* Bloc 1 : Timbre Officiel */}
+                          {blk.id === 'blk_timbre' && (
+                            <div className="text-center space-y-1 border-b border-slate-200 pb-3">
+                              {lines.map((line, idx) => (
+                                <p
+                                  key={idx}
+                                  className={
+                                    idx === 0
+                                      ? 'text-sm sm:text-base font-bold uppercase tracking-widest text-slate-900'
+                                      : 'text-xs sm:text-sm italic text-slate-600'
+                                  }
+                                >
+                                  {line}
+                                </p>
+                              ))}
+                            </div>
+                          )}
+
+                          {/* Bloc 2 : Identité Entité & Logo */}
+                          {blk.id === 'blk_entity' && (
+                            <div className="flex flex-wrap items-center gap-4 border-b-2 pb-4" style={{ borderColor: identity.primaryColor }}>
+                              <div
+                                className="flex h-16 w-16 shrink-0 items-center justify-center overflow-hidden rounded-xl border bg-white shadow-sm"
+                                style={{ borderColor: identity.accentColor }}
+                              >
+                                {identity.logoUrl ? (
+                                  <img
+                                    src={identity.logoUrl}
+                                    alt={identity.entityName}
+                                    className="h-full w-full object-contain p-1"
+                                  />
+                                ) : identity.logoSvg ? (
+                                  <span
+                                    className="flex h-full w-full items-center justify-center p-1 [&>svg]:h-full [&>svg]:w-full"
+                                    dangerouslySetInnerHTML={{ __html: identity.logoSvg }}
+                                  />
+                                ) : (
+                                  <span
+                                    className="flex h-full w-full items-center justify-center text-sm font-bold text-white"
+                                    style={{ backgroundColor: identity.primaryColor }}
+                                  >
+                                    {identity.entityCode.slice(0, 6)}
+                                  </span>
+                                )}
+                              </div>
+                              <div className="min-w-0 flex-1 space-y-1">
+                                <div className="flex flex-wrap items-center gap-2">
+                                  <span
+                                    className="rounded px-2 py-0.5 font-sans text-[11px] font-bold uppercase text-white"
+                                    style={{ backgroundColor: identity.primaryColor }}
+                                  >
+                                    {identity.entityType}
+                                  </span>
+                                  <span className="font-mono text-xs font-semibold text-slate-500">
+                                    {identity.entityCode} · {identity.municipality}
+                                  </span>
+                                </div>
+                                <h3
+                                  className="text-lg sm:text-xl font-bold leading-snug"
+                                  style={{ color: identity.primaryColor }}
+                                >
+                                  {identity.entityName}
+                                </h3>
+                                {lines.slice(1).map((line, idx) => (
+                                  <p key={idx} className="text-sm text-slate-700">
+                                    {line}
+                                  </p>
+                                ))}
+                              </div>
+                            </div>
+                          )}
+
+                          {/* Bloc 3 : Chrono & Sceau QR */}
+                          {blk.id === 'blk_chrono' && (
+                            <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-slate-200 bg-slate-50 px-4 py-3">
+                              <div className="space-y-0.5">
+                                {lines.map((line, idx) => (
+                                  <p
+                                    key={idx}
+                                    className={
+                                      idx === 0
+                                        ? 'text-sm sm:text-base font-bold text-slate-900'
+                                        : 'text-xs sm:text-sm text-slate-600'
+                                    }
+                                  >
+                                    {line}
+                                  </p>
+                                ))}
+                              </div>
+                              <div className="flex items-center gap-2 rounded-lg border border-slate-300 bg-white px-2.5 py-1.5 font-sans text-[11px]">
+                                <div
+                                  className="grid h-8 w-8 grid-cols-3 gap-0.5 p-1 rounded"
+                                  style={{ backgroundColor: identity.primaryColor }}
+                                >
+                                  <span className="bg-white" />
+                                  <span className="bg-transparent" />
+                                  <span className="bg-white" />
+                                  <span className="bg-transparent" />
+                                  <span className="bg-[#D4AF37]" />
+                                  <span className="bg-white" />
+                                  <span className="bg-white" />
+                                  <span className="bg-white" />
+                                  <span className="bg-transparent" />
+                                </div>
+                                <div>
+                                  <div className="font-bold text-[#0A1F3D]">SCEAU QR</div>
+                                  <div className="text-[10px] text-slate-500">SHA-256</div>
+                                </div>
+                              </div>
+                            </div>
+                          )}
+
+                          {/* Bloc 4 : Corps de l'Acte (Haute Lisibilité) */}
+                          {blk.id === 'blk_body' && (
+                            <div className="space-y-3 py-2 text-[15px] sm:text-base leading-7 text-slate-900">
+                              {lines.map((line, idx) => {
+                                const isHeading =
+                                  idx === 0 ||
+                                  /^(DÉCISION|BORDEREAU|ORDRE DE SERVICE|Article\s+\d)/i.test(line);
+                                return (
+                                  <p
+                                    key={idx}
+                                    className={
+                                      idx === 0
+                                        ? 'text-base sm:text-lg font-bold tracking-tight text-slate-950'
+                                        : isHeading
+                                          ? 'font-semibold text-slate-900'
+                                          : 'text-slate-800'
+                                    }
+                                  >
+                                    {line}
+                                  </p>
+                                );
+                              })}
+                            </div>
+                          )}
+
+                          {/* Bloc 5 : Signataire */}
+                          {blk.id === 'blk_signatory' && (
+                            <div className="flex justify-end pt-3">
+                              <div className="w-full max-w-sm rounded-xl border border-dashed border-slate-300 bg-slate-50/60 p-4 text-right">
+                                {lines.map((line, idx) => (
+                                  <p
+                                    key={idx}
+                                    className={
+                                      idx === lines.length - 1
+                                        ? 'mt-4 text-sm sm:text-base font-bold uppercase text-slate-950 underline decoration-slate-300 underline-offset-4'
+                                        : 'text-sm text-slate-700'
+                                    }
+                                  >
+                                    {line}
+                                  </p>
+                                ))}
+                              </div>
+                            </div>
+                          )}
+
+                          {/* Bloc 6 : Ampliations & Pied de Page Légal */}
+                          {blk.id === 'blk_ampliations' && (
+                            <div className="border-t border-slate-200 pt-3 space-y-1.5 text-xs sm:text-sm text-slate-600">
+                              {lines.map((line, idx) => (
+                                <p
+                                  key={idx}
+                                  className={
+                                    idx === lines.length - 1
+                                      ? 'pt-2 text-[11px] font-sans text-slate-400 border-t border-slate-100'
+                                      : 'text-slate-700'
+                                  }
+                                >
+                                  {line}
+                                </p>
+                              ))}
+                            </div>
+                          )}
+
+                          {/* Fallback pour tout autre bloc personnalisé */}
+                          {![
+                            'blk_timbre',
+                            'blk_entity',
+                            'blk_chrono',
+                            'blk_body',
+                            'blk_signatory',
+                            'blk_ampliations',
+                          ].includes(blk.id) && (
+                            <div className="space-y-2 text-[15px] leading-relaxed text-slate-800">
+                              {lines.map((line, idx) => (
+                                <p key={idx}>{line}</p>
+                              ))}
+                            </div>
+                          )}
+
+                          {/* Édition directe inline si l'Inspecteur droit est masqué */}
+                          {isSel && !rightOpen && (
+                            <div
+                              onClick={(e) => e.stopPropagation()}
+                              className="mt-3 rounded-lg border border-[#0A1F3D]/30 bg-white p-3 font-sans"
+                            >
+                              <div className="mb-1 text-[11px] font-bold text-[#0A1F3D]">
+                                Édition rapide du bloc « {blk.label} »
+                              </div>
+                              <textarea
+                                rows={3}
+                                value={blk.customText ?? ''}
+                                onChange={(e) =>
+                                  setBlocks((prev) =>
+                                    prev.map((p) =>
+                                      p.id === blk.id
+                                        ? { ...p, customText: e.target.value }
+                                        : p
+                                    )
+                                  )
+                                }
+                                className="w-full rounded-lg border border-slate-300 p-2 font-mono text-xs text-slate-900"
+                              />
+                            </div>
+                          )}
                         </div>
                       );
                     })}
@@ -1501,21 +1982,83 @@ export function AdminStudioWorkspace({
         </section>
 
         {/* 4. PANNEAU DROIT : INSPECTEUR DE PROPRIÉTÉS STYLE FIGMA */}
-        <aside className="space-y-4 rounded-2xl border border-slate-200 bg-white p-4 shadow-sm lg:col-span-3">
-          <div className="text-[11px] font-bold uppercase tracking-wider text-slate-400">
-            Inspecteur de Propriétés
-          </div>
+        {rightOpen && (
+          <aside className="space-y-4 rounded-2xl border border-slate-200 bg-white p-4 shadow-sm lg:col-span-3">
+            <div className="text-[11px] font-bold uppercase tracking-wider text-slate-400">
+              Inspecteur de Propriétés
+            </div>
 
-          {section === 'STUDIO_FIGMA' && (
-            <div className="space-y-3 text-xs">
-              <div>
-                <label className="font-semibold text-slate-600">Nom de l’Entité</label>
-                <input
-                  value={identity.entityName}
-                  onChange={(e) => setIdentity({ ...identity, entityName: e.target.value })}
-                  className="mt-1 w-full rounded-lg border border-slate-300 px-2.5 py-1.5"
-                />
-              </div>
+            {section === 'STUDIO_FIGMA' && (
+              <div className="space-y-3 text-xs">
+                <div>
+                  <label className="font-semibold text-slate-600">Nom de l’Entité</label>
+                  <input
+                    value={identity.entityName}
+                    onChange={(e) => setIdentity({ ...identity, entityName: e.target.value })}
+                    className="mt-1 w-full rounded-lg border border-slate-300 px-2.5 py-1.5"
+                  />
+                </div>
+
+                {/* Upload Logo Officiel (Studio + En-tête session) */}
+                <div className="rounded-xl border border-slate-200 bg-slate-50 p-3">
+                  <div className="mb-2 flex items-center justify-between">
+                    <span className="font-bold text-[#0A1F3D]">
+                      Logo de l’Entité
+                    </span>
+                    {(identity.logoUrl || identity.logoSvg) && (
+                      <button
+                        type="button"
+                        onClick={() =>
+                          setIdentity((prev) => ({
+                            ...prev,
+                            logoUrl: undefined,
+                            logoSvg: undefined,
+                          }))
+                        }
+                        className="text-[11px] font-semibold text-rose-600 hover:underline"
+                      >
+                        Retirer
+                      </button>
+                    )}
+                  </div>
+                  <div className="flex items-center gap-3">
+                    <div className="flex h-14 w-14 shrink-0 items-center justify-center overflow-hidden rounded-xl border border-slate-300 bg-white">
+                      {identity.logoUrl ? (
+                        <img
+                          src={identity.logoUrl}
+                          alt="Logo entité"
+                          className="h-full w-full object-contain p-1"
+                        />
+                      ) : identity.logoSvg ? (
+                        <span
+                          className="flex h-full w-full items-center justify-center p-1 [&>svg]:h-full [&>svg]:w-full"
+                          dangerouslySetInnerHTML={{ __html: identity.logoSvg }}
+                        />
+                      ) : (
+                        <Building2 className="h-6 w-6 text-slate-400" />
+                      )}
+                    </div>
+                    <label className="flex flex-1 cursor-pointer flex-col items-center justify-center gap-1 rounded-xl border border-dashed border-[#0A1F3D]/40 bg-white px-3 py-2 text-center hover:bg-slate-100">
+                      <span className="inline-flex items-center gap-1.5 font-semibold text-[#0A1F3D]">
+                        <ImagePlus className="h-3.5 w-3.5 text-[#D4AF37]" />
+                        Téléverser un logo
+                      </span>
+                      <span className="text-[10px] text-slate-500">
+                        PNG, JPG, WebP ou SVG
+                      </span>
+                      <input
+                        type="file"
+                        accept="image/png,image/jpeg,image/webp,image/svg+xml"
+                        onChange={(e) => {
+                          const f = e.target.files?.[0] ?? null;
+                          void handleLogoFileChange(f);
+                          e.target.value = '';
+                        }}
+                        className="hidden"
+                      />
+                    </label>
+                  </div>
+                </div>
               <div className="grid grid-cols-2 gap-2">
                 <div>
                   <label className="font-semibold text-slate-600">Couleur Primaire</label>
@@ -1693,7 +2236,8 @@ export function AdminStudioWorkspace({
               </button>
             </div>
           )}
-        </aside>
+          </aside>
+        )}
       </div>
     </div>
   );

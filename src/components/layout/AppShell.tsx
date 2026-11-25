@@ -111,14 +111,17 @@ export function AppShell({ activeSpace, onSelectSpace, children }: AppShellProps
     availableProfiles[0] ??
     ROLE_PROFILES[0]!;
 
-  const activeProfile: ActiveRoleProfile = studioOverride
-    ? {
-        ...baseProfile,
-        entityName: studioOverride.identity.entityName,
-        primaryColor: studioOverride.identity.primaryColor,
-        accentColor: studioOverride.identity.accentColor,
-      }
-    : baseProfile;
+  const activeProfile: ActiveRoleProfile =
+    studioOverride && studioOverride.identity.entityId === baseProfile.entityId
+      ? {
+          ...baseProfile,
+          entityName: studioOverride.identity.entityName,
+          primaryColor: studioOverride.identity.primaryColor,
+          accentColor: studioOverride.identity.accentColor,
+          logoUrl: studioOverride.identity.logoUrl,
+          logoSvg: studioOverride.identity.logoSvg,
+        }
+      : baseProfile;
 
   const canAccessStudio =
     demoMode ||
@@ -199,8 +202,21 @@ export function AppShell({ activeSpace, onSelectSpace, children }: AppShellProps
       >
         <div className="mx-auto flex max-w-7xl flex-wrap items-center justify-between gap-3 px-4 py-3 sm:px-6">
           <div className="flex items-center gap-3">
-            <div className="flex h-10 w-10 items-center justify-center rounded-xl border border-gov-gold/60 bg-gov-navyLight">
-              <Building2 className="h-5 w-5 text-gov-gold" />
+            <div className="flex h-10 w-10 items-center justify-center overflow-hidden rounded-xl border border-gov-gold/60 bg-gov-navyLight">
+              {activeProfile.logoUrl ? (
+                <img
+                  src={activeProfile.logoUrl}
+                  alt={activeProfile.entityCode}
+                  className="h-full w-full bg-white object-contain p-0.5"
+                />
+              ) : activeProfile.logoSvg ? (
+                <span
+                  className="flex h-full w-full items-center justify-center bg-white p-0.5 [&>svg]:h-full [&>svg]:w-full"
+                  dangerouslySetInnerHTML={{ __html: activeProfile.logoSvg }}
+                />
+              ) : (
+                <Building2 className="h-5 w-5 text-gov-gold" />
+              )}
             </div>
             <div>
               <div className="flex flex-wrap items-center gap-2">

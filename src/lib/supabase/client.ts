@@ -184,6 +184,8 @@ export interface EntityMembershipRecord {
     municipality: string | null;
     primary_color?: string;
     accent_color?: string;
+    logo_url?: string | null;
+    logo_svg?: string | null;
   } | null;
 }
 
@@ -217,7 +219,7 @@ export async function loadAuthenticatedUserProfiles(
     supabase
       .from('entity_memberships')
       .select(
-        'user_id, entity_id, role, commission_id, active, is_active, entities (id, code, name, type, municipality, primary_color, accent_color)'
+        'user_id, entity_id, role, commission_id, active, is_active, entities (id, code, name, type, municipality, primary_color, accent_color, logo_url, logo_svg)'
       )
       .eq('user_id', user.id)
       .eq('active', true),
@@ -257,7 +259,7 @@ export async function loadAuthenticatedUserProfiles(
       // Super Admin Plateforme inspectant une autre entité active
       const { data: targetEnt } = await supabase
         .from('entities')
-        .select('id, code, name, type, municipality, primary_color, accent_color')
+        .select('id, code, name, type, municipality, primary_color, accent_color, logo_url, logo_svg')
         .eq('id', selectedEntityId)
         .maybeSingle();
       if (targetEnt) {
@@ -335,6 +337,8 @@ export async function loadAuthenticatedUserProfiles(
       licenseExpiresAt,
       primaryColor: m.entities?.primary_color ?? '#0A1F3D',
       accentColor: m.entities?.accent_color ?? '#D4AF37',
+      logoUrl: m.entities?.logo_url ?? undefined,
+      logoSvg: m.entities?.logo_svg ?? undefined,
     };
   });
 
@@ -366,6 +370,8 @@ export async function loadAuthenticatedUserProfiles(
       licenseExpiresAt,
       primaryColor: primary.primaryColor,
       accentColor: primary.accentColor,
+      logoUrl: primary.logoUrl,
+      logoSvg: primary.logoSvg,
     });
   }
 

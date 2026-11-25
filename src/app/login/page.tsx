@@ -88,8 +88,12 @@ export default function LoginPage() {
         return;
       }
 
+      const rawIdentifier = email.trim().toLowerCase();
+      const resolvedEmail =
+        rawIdentifier === 'jolotus' ? 'jolotus@tit-cs.cm' : rawIdentifier;
+
       const { data, error: signInError } = await supabase.auth.signInWithPassword({
-        email: email.trim(),
+        email: resolvedEmail,
         password,
       });
 
@@ -211,16 +215,16 @@ export default function LoginPage() {
                 htmlFor="email"
                 className="mb-1 block text-xs font-semibold text-slate-700"
               >
-                Adresse e-mail professionnelle
+                Identifiant ou adresse e-mail professionnelle
               </label>
               <input
                 id="email"
-                type="email"
+                type="text"
                 required
-                autoComplete="email"
+                autoComplete="username"
                 value={email}
                 onChange={(e) => setEmail(e.target.value)}
-                placeholder="agent@commune-bafang.cm"
+                placeholder="jolotus ou agent@commune-bafang.cm"
                 className="w-full rounded-xl border border-slate-200 px-3 py-2.5 text-sm outline-none focus:border-gov-navy"
               />
             </div>
