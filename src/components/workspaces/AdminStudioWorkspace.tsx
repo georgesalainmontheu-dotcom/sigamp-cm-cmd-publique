@@ -10,6 +10,8 @@ import {
   Database,
   Eye,
   EyeOff,
+  FileCode2,
+  GitBranch,
   History,
   ImagePlus,
   KeyRound,
@@ -27,24 +29,39 @@ import {
   RotateCcw,
   Shield,
   ShieldAlert,
+  ShieldCheck,
   Smartphone,
   Sparkles,
+  Store,
   Tablet,
   Trash2,
   UserCheck,
   UserX,
+  Users,
   ZoomIn,
   ZoomOut,
 } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   createStudioVersionSnapshot,
+  DEFAULT_CMS_ACT_TEMPLATES,
+  DEFAULT_CMS_COMMISSION_MEMBERS,
+  DEFAULT_CMS_GED_POLICY,
+  DEFAULT_CMS_VENDORS,
+  DEFAULT_CMS_WORKFLOW_RULES,
   DEFAULT_STUDIO_BLOCKS,
   DYNAMIC_STUDIO_VARIABLES,
   moveStudioBlock,
   renderStudioTemplate,
+  type CmsActTemplateOverride,
+  type CmsCommissionMember,
+  type CmsGedPolicyConfig,
+  type CmsVendorRecord,
+  type CmsWorkflowRule,
   type EntityVisualIdentity,
   type StudioDocumentBlock,
+  type StudioHeaderLayout,
+  type StudioLogoPosition,
   type StudioVersionSnapshot,
 } from '../../lib/domain/entityStudioEngine';
 import {
@@ -64,13 +81,19 @@ import { buildAuthenticatedJsonHeaders } from '../../lib/supabase/client';
 import type { ActiveRoleProfile } from '../../lib/ui/demoProfiles';
 import type { EntityType, RbacRole } from '../../types/domain';
 import { TitCsLogo } from '../branding/TitCsBrandFooter';
+import { CmsModulesPanel, type AuditLogRow } from './CmsModulesPanel';
 
 type StudioSectionId =
   | 'OVERVIEW'
   | 'STUDIO_FIGMA'
+  | 'ACT_TEMPLATES'
   | 'LOGINS_RBAC'
-  | 'LICENSES_SALES'
+  | 'WORKFLOWS_VISAS'
+  | 'COMMISSIONS_SCALES'
+  | 'VENDORS_MERCURIALE'
   | 'REFERENTIALS'
+  | 'LICENSES_SALES'
+  | 'AUDIT_SECURITY'
   | 'RESET_PROD';
 
 interface AdminEntityRow {
@@ -89,6 +112,16 @@ interface AdminEntityRow {
     blocks?: StudioDocumentBlock[];
     typography?: 'serif' | 'sans';
     compactHeader?: boolean;
+    identityExtra?: Partial<EntityVisualIdentity>;
+  };
+  local_referentials?: {
+    services?: string[];
+    budgetLines?: string[];
+    actTemplates?: CmsActTemplateOverride[];
+    workflowRules?: CmsWorkflowRule[];
+    commissionMembers?: CmsCommissionMember[];
+    vendors?: CmsVendorRecord[];
+    gedPolicy?: CmsGedPolicyConfig;
   };
   studio_versions?: StudioVersionSnapshot[];
 }
@@ -133,6 +166,9 @@ export function AdminStudioWorkspace({
   const [sampleDocType, setSampleDocType] = useState<
     'STANDARD' | 'DECISION' | 'BORDEREAU' | 'ORDRE_SERVICE'
   >('STANDARD');
+  const [inspectorTab, setInspectorTab] = useState<'IDENTITY' | 'HEADER' | 'FOOTER' | 'BLOCK'>(
+    'IDENTITY'
+  );
   const [statusBanner, setStatusBanner] = useState<string | null>(null);
   const [errorBanner, setErrorBanner] = useState<string | null>(null);
 
@@ -180,14 +216,50 @@ export function AdminStudioWorkspace({
     logoUrl: profile.logoUrl,
     logoSvg: profile.logoSvg,
     headerTimbreText: 'RÉPUBLIQUE DU CAMEROUN\nPaix - Travail - Patrie',
+    headerTimbreTextEn: 'REPUBLIC OF CAMEROON\nPeace - Work - Fatherland',
     footerLegalText:
       '© 2026 Joël Tchassom & TIT-Consulting Solutions (TIT-CS) — Plateforme SIGAMP-CM',
     typography: 'serif',
     compactHeader: false,
+    headerLayout: 'BILINGUAL_SPLIT',
+    headerLanguage: 'FR',
+    logoPosition: 'LEFT',
+    showTricolorBar: true,
+    tutelleFr: 'MINISTÈRE DE LA DÉCENTRALISATION ET DU DÉVELOPPEMENT LOCAL',
+    tutelleEn: 'MINISTRY OF DECENTRALIZATION AND LOCAL DEVELOPMENT',
+    regionDeptLineFr: `RÉGION · DÉPARTEMENT — ${profile.city.toUpperCase()}`,
+    regionDeptLineEn: `REGION · DIVISION — ${profile.city.toUpperCase()}`,
+    emittingServiceFr: 'SECRÉTARIAT GÉNÉRAL · SERVICE INTERNE DES MARCHÉS PUBLICS (SIGAMP)',
+    emittingServiceEn: 'GENERAL SECRETARIAT · INTERNAL PUBLIC PROCUREMENT SERVICE',
+    taxRegistrationNumber: 'NIU-PUBLIC-CM-2026',
+    budgetChapterCode: 'CHAP. 22 / ART. 2210',
+    referencePrefix: `SIGAMP/${profile.entityCode}`,
+    footerPostalAddress: `B.P. 100 ${profile.city} — Cameroun`,
+    footerPhysicalAddress: `Siège Institutionnel, ${profile.city}`,
+    footerPhone: '(+237) 222 20 00 00',
+    footerEmail: `sigamp@${profile.entityCode.toLowerCase()}.cm`,
+    footerWebsite: 'https://sigamp-cm-commande-publique.vercel.app',
+    footerBankTreasury: 'Recette / Trésor Public Compétent',
+    footerShowPageNumbers: true,
+    footerShowVerificationUrl: true,
   });
   const [blocks, setBlocks] = useState<StudioDocumentBlock[]>(DEFAULT_STUDIO_BLOCKS);
   const [selectedBlockId, setSelectedBlockId] = useState<string>(DEFAULT_STUDIO_BLOCKS[1]!.id);
   const [versions, setVersions] = useState<StudioVersionSnapshot[]>([]);
+
+  // Modules CMS exhaustifs
+  const [actTemplates, setActTemplates] = useState<CmsActTemplateOverride[]>(
+    DEFAULT_CMS_ACT_TEMPLATES
+  );
+  const [workflowRules, setWorkflowRules] = useState<CmsWorkflowRule[]>(
+    DEFAULT_CMS_WORKFLOW_RULES
+  );
+  const [commissionMembers, setCommissionMembers] = useState<CmsCommissionMember[]>(
+    DEFAULT_CMS_COMMISSION_MEMBERS
+  );
+  const [vendors, setVendors] = useState<CmsVendorRecord[]>(DEFAULT_CMS_VENDORS);
+  const [gedPolicy, setGedPolicy] = useState<CmsGedPolicyConfig>(DEFAULT_CMS_GED_POLICY);
+  const [auditLogs, setAuditLogs] = useState<AuditLogRow[]>([]);
 
   // Licences & Vente
   const [activeLicense, setActiveLicense] = useState<EntityLicenseRecord>({
@@ -289,18 +361,24 @@ export function AdminStudioWorkspace({
         const sJson = (await studioRes.json()) as {
           entities?: AdminEntityRow[];
           memberships?: AdminMembershipRow[];
+          auditLogs?: AuditLogRow[];
         };
+        if (Array.isArray(sJson.auditLogs)) {
+          setAuditLogs(sJson.auditLogs);
+        }
         if (sJson.entities && sJson.entities.length > 0) {
           setEntities(sJson.entities);
           const cur =
             sJson.entities.find((e) => e.id === targetEntityId) ?? sJson.entities[0]!;
+          const extra = cur.studio_config?.identityExtra ?? {};
+          const cityVal = cur.municipality ?? 'Yaoundé';
           setIdentity((prev) => ({
             ...prev,
             entityId: cur.id,
             entityCode: cur.code,
             entityName: cur.name,
             entityType: cur.type,
-            municipality: cur.municipality ?? 'Yaoundé',
+            municipality: cityVal,
             primaryColor: cur.primary_color ?? '#0A1F3D',
             accentColor: cur.accent_color ?? '#D4AF37',
             logoUrl: cur.logo_url ?? undefined,
@@ -312,7 +390,74 @@ export function AdminStudioWorkspace({
               '© 2026 Joël Tchassom & TIT-Consulting Solutions (TIT-CS) — Plateforme SIGAMP-CM',
             typography: cur.studio_config?.typography ?? 'serif',
             compactHeader: Boolean(cur.studio_config?.compactHeader),
+            headerLayout: extra.headerLayout ?? 'BILINGUAL_SPLIT',
+            headerLanguage: extra.headerLanguage ?? 'FR',
+            logoPosition: extra.logoPosition ?? 'LEFT',
+            showTricolorBar: extra.showTricolorBar ?? true,
+            headerTimbreTextEn:
+              extra.headerTimbreTextEn ?? 'REPUBLIC OF CAMEROON\nPeace - Work - Fatherland',
+            tutelleFr:
+              extra.tutelleFr ?? 'MINISTÈRE DE LA DÉCENTRALISATION ET DU DÉVELOPPEMENT LOCAL',
+            tutelleEn:
+              extra.tutelleEn ?? 'MINISTRY OF DECENTRALIZATION AND LOCAL DEVELOPMENT',
+            regionDeptLineFr:
+              extra.regionDeptLineFr ?? `RÉGION · DÉPARTEMENT — ${cityVal.toUpperCase()}`,
+            regionDeptLineEn:
+              extra.regionDeptLineEn ?? `REGION · DIVISION — ${cityVal.toUpperCase()}`,
+            emittingServiceFr:
+              extra.emittingServiceFr ??
+              'SECRÉTARIAT GÉNÉRAL · SERVICE INTERNE DES MARCHÉS PUBLICS (SIGAMP)',
+            emittingServiceEn:
+              extra.emittingServiceEn ??
+              'GENERAL SECRETARIAT · INTERNAL PUBLIC PROCUREMENT SERVICE',
+            taxRegistrationNumber: extra.taxRegistrationNumber ?? 'NIU-PUBLIC-CM-2026',
+            budgetChapterCode: extra.budgetChapterCode ?? 'CHAP. 22 / ART. 2210',
+            referencePrefix: extra.referencePrefix ?? `SIGAMP/${cur.code}`,
+            footerPostalAddress:
+              extra.footerPostalAddress ?? `B.P. 100 ${cityVal} — Cameroun`,
+            footerPhysicalAddress:
+              extra.footerPhysicalAddress ?? `Siège Institutionnel, ${cityVal}`,
+            footerPhone: extra.footerPhone ?? '(+237) 222 20 00 00',
+            footerEmail: extra.footerEmail ?? `sigamp@${cur.code.toLowerCase()}.cm`,
+            footerWebsite:
+              extra.footerWebsite ?? 'https://sigamp-cm-commande-publique.vercel.app',
+            footerBankTreasury:
+              extra.footerBankTreasury ?? 'Recette / Trésor Public Compétent',
+            footerShowPageNumbers: extra.footerShowPageNumbers ?? true,
+            footerShowVerificationUrl: extra.footerShowVerificationUrl ?? true,
           }));
+          const refs = cur.local_referentials;
+          if (refs?.services && refs.services.length > 0) {
+            setInternalServicesText(refs.services.join('\n'));
+          }
+          if (refs?.budgetLines && refs.budgetLines.length > 0) {
+            setBudgetLinesText(refs.budgetLines.join('\n'));
+          }
+          if (refs?.actTemplates && refs.actTemplates.length > 0) {
+            setActTemplates(refs.actTemplates);
+          } else {
+            setActTemplates(DEFAULT_CMS_ACT_TEMPLATES);
+          }
+          if (refs?.workflowRules && refs.workflowRules.length > 0) {
+            setWorkflowRules(refs.workflowRules);
+          } else {
+            setWorkflowRules(DEFAULT_CMS_WORKFLOW_RULES);
+          }
+          if (refs?.commissionMembers && refs.commissionMembers.length > 0) {
+            setCommissionMembers(refs.commissionMembers);
+          } else {
+            setCommissionMembers(DEFAULT_CMS_COMMISSION_MEMBERS);
+          }
+          if (refs?.vendors && refs.vendors.length > 0) {
+            setVendors(refs.vendors);
+          } else {
+            setVendors(DEFAULT_CMS_VENDORS);
+          }
+          if (refs?.gedPolicy) {
+            setGedPolicy(refs.gedPolicy);
+          } else {
+            setGedPolicy(DEFAULT_CMS_GED_POLICY);
+          }
           if (cur.studio_config?.blocks && cur.studio_config.blocks.length > 0) {
             const hydratedBlocks = cur.studio_config.blocks.map((blk) => {
               const fallback = DEFAULT_STUDIO_BLOCKS.find((d) => d.id === blk.id);
@@ -415,11 +560,40 @@ export function AdminStudioWorkspace({
             blocks,
             typography: identity.typography,
             compactHeader: identity.compactHeader,
+            identityExtra: {
+              headerLayout: identity.headerLayout,
+              headerLanguage: identity.headerLanguage,
+              logoPosition: identity.logoPosition,
+              showTricolorBar: identity.showTricolorBar,
+              headerTimbreTextEn: identity.headerTimbreTextEn,
+              tutelleFr: identity.tutelleFr,
+              tutelleEn: identity.tutelleEn,
+              regionDeptLineFr: identity.regionDeptLineFr,
+              regionDeptLineEn: identity.regionDeptLineEn,
+              emittingServiceFr: identity.emittingServiceFr,
+              emittingServiceEn: identity.emittingServiceEn,
+              taxRegistrationNumber: identity.taxRegistrationNumber,
+              budgetChapterCode: identity.budgetChapterCode,
+              referencePrefix: identity.referencePrefix,
+              footerPostalAddress: identity.footerPostalAddress,
+              footerPhysicalAddress: identity.footerPhysicalAddress,
+              footerPhone: identity.footerPhone,
+              footerEmail: identity.footerEmail,
+              footerWebsite: identity.footerWebsite,
+              footerBankTreasury: identity.footerBankTreasury,
+              footerShowPageNumbers: identity.footerShowPageNumbers,
+              footerShowVerificationUrl: identity.footerShowVerificationUrl,
+            },
           },
           studioVersions: nextVersions,
           localReferentials: {
             services: internalServicesText.split('\n').filter(Boolean),
             budgetLines: budgetLinesText.split('\n').filter(Boolean),
+            actTemplates,
+            workflowRules,
+            commissionMembers,
+            vendors,
+            gedPolicy,
           },
         }),
       });
@@ -1024,39 +1198,70 @@ export function AdminStudioWorkspace({
 
       {/* LAYOUT 3 ZONES ADAPTATIF STYLE FIGMA & WORDPRESS/STRAPI */}
       <div className="grid grid-cols-1 gap-4 lg:grid-cols-12">
-        {/* 2. PANNEAU GAUCHE : EXPLORATEUR DE CALQUES & MODULES */}
+        {/* 2. PANNEAU GAUCHE : EXPLORATEUR DE CALQUES & MODULES EXHAUSTIFS */}
         {leftOpen && (
           <aside className="space-y-3 rounded-2xl border border-slate-200 bg-white p-3.5 shadow-sm lg:col-span-3">
           <div className="text-[11px] font-bold uppercase tracking-wider text-slate-400">
-            Explorateur &amp; Modules CMS
+            Explorateur &amp; Modules CMS (11)
           </div>
-          <nav className="space-y-1">
+          <nav className="space-y-3">
             {[
-              { id: 'OVERVIEW', label: 'Vue d’ensemble & Gouvernance', icon: Shield },
-              { id: 'STUDIO_FIGMA', label: 'Studio Identité & Blocs (Figma)', icon: Palette },
-              { id: 'LOGINS_RBAC', label: 'Logins & Rôles (Activer/Couper)', icon: UserCheck },
-              { id: 'LICENSES_SALES', label: 'Vente & Gestion des Licences', icon: CreditCard },
-              { id: 'REFERENTIALS', label: 'Données Internes & Barèmes', icon: Database },
-              { id: 'RESET_PROD', label: 'Remise à Zéro Production', icon: RotateCcw },
-            ].map((item) => {
-              const Icon = item.icon;
-              const active = section === item.id;
-              return (
-                <button
-                  key={item.id}
-                  type="button"
-                  onClick={() => setSection(item.id as StudioSectionId)}
-                  className={`flex w-full items-center gap-2.5 rounded-xl px-3 py-2 text-left text-xs font-semibold transition ${
-                    active
-                      ? 'bg-[#0A1F3D] text-white shadow-sm'
-                      : 'text-slate-700 hover:bg-slate-100'
-                  }`}
-                >
-                  <Icon className={`h-4 w-4 ${active ? 'text-[#D4AF37]' : 'text-slate-500'}`} />
-                  <span>{item.label}</span>
-                </button>
-              );
-            })}
+              {
+                group: 'Identité & Modèles',
+                items: [
+                  { id: 'OVERVIEW', label: 'Vue d’ensemble & Gouvernance', icon: Shield },
+                  { id: 'STUDIO_FIGMA', label: 'Studio Canvas (En-tête & Pied)', icon: Palette },
+                  { id: 'ACT_TEMPLATES', label: 'Modèles d’Actes & Clauses', icon: FileCode2 },
+                ],
+              },
+              {
+                group: 'Acteurs, Circuits & Commissions',
+                items: [
+                  { id: 'LOGINS_RBAC', label: 'Comptes Auth & Rôles RBAC', icon: UserCheck },
+                  { id: 'WORKFLOWS_VISAS', label: 'Workflows, Visas & Délais CMP', icon: GitBranch },
+                  { id: 'COMMISSIONS_SCALES', label: 'Commissions & Indemnités', icon: Users },
+                ],
+              },
+              {
+                group: 'Données, Licences & Sécurité',
+                items: [
+                  { id: 'VENDORS_MERCURIALE', label: 'Fournisseurs & Liste ARMP', icon: Store },
+                  { id: 'REFERENTIALS', label: 'Services Internes & Budgets', icon: Database },
+                  { id: 'LICENSES_SALES', label: 'Vente & Gestion des Licences', icon: CreditCard },
+                  { id: 'AUDIT_SECURITY', label: 'Audit, Politique GED & Export', icon: ShieldCheck },
+                  { id: 'RESET_PROD', label: 'Remise à Zéro Production', icon: RotateCcw },
+                ],
+              },
+            ].map((grp) => (
+              <div key={grp.group} className="space-y-1">
+                <div className="px-2 text-[10px] font-bold uppercase tracking-wider text-slate-400">
+                  {grp.group}
+                </div>
+                {grp.items.map((item) => {
+                  const Icon = item.icon;
+                  const active = section === item.id;
+                  return (
+                    <button
+                      key={item.id}
+                      type="button"
+                      onClick={() => setSection(item.id as StudioSectionId)}
+                      className={`flex w-full items-center gap-2.5 rounded-xl px-3 py-1.5 text-left text-xs font-semibold transition ${
+                        active
+                          ? 'bg-[#0A1F3D] text-white shadow-sm'
+                          : 'text-slate-700 hover:bg-slate-100'
+                      }`}
+                    >
+                      <Icon
+                        className={`h-3.5 w-3.5 shrink-0 ${
+                          active ? 'text-[#D4AF37]' : 'text-slate-500'
+                        }`}
+                      />
+                      <span className="truncate">{item.label}</span>
+                    </button>
+                  );
+                })}
+              </div>
+            ))}
           </nav>
 
           {/* Arbre des calques Figma (quand Studio actif) */}
@@ -1184,6 +1389,35 @@ export function AdminStudioWorkspace({
             <div className="flex flex-wrap items-center gap-1.5">
               {section === 'STUDIO_FIGMA' && (
                 <>
+                  <div className="flex items-center gap-0.5 rounded-lg border border-slate-200 bg-slate-50 p-0.5">
+                    <button
+                      type="button"
+                      onClick={() =>
+                        setIdentity((p) => ({ ...p, headerLayout: 'BILINGUAL_SPLIT' }))
+                      }
+                      className={`rounded-md px-2 py-1 text-[11px] font-semibold ${
+                        (identity.headerLayout ?? 'BILINGUAL_SPLIT') === 'BILINGUAL_SPLIT'
+                          ? 'bg-[#0A1F3D] text-white'
+                          : 'text-slate-600 hover:bg-white'
+                      }`}
+                    >
+                      Bilingue FR/EN
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() =>
+                        setIdentity((p) => ({ ...p, headerLayout: 'CENTERED' }))
+                      }
+                      className={`rounded-md px-2 py-1 text-[11px] font-semibold ${
+                        identity.headerLayout === 'CENTERED'
+                          ? 'bg-[#0A1F3D] text-white'
+                          : 'text-slate-600 hover:bg-white'
+                      }`}
+                    >
+                      Centré
+                    </button>
+                  </div>
+
                   <select
                     value={sampleDocType}
                     onChange={(e) =>
@@ -1338,7 +1572,32 @@ export function AdminStudioWorkspace({
               </div>
             )}
 
-            {/* STUDIO FIGMA / CMS LIVE CANVAS (HAUTE LISIBILITÉ A4) */}
+            {/* 5 NOUVEAUX MODULES CMS EXHAUSTIFS */}
+            {(section === 'ACT_TEMPLATES' ||
+              section === 'WORKFLOWS_VISAS' ||
+              section === 'COMMISSIONS_SCALES' ||
+              section === 'VENDORS_MERCURIALE' ||
+              section === 'AUDIT_SECURITY') && (
+              <CmsModulesPanel
+                section={section}
+                identity={identity}
+                blocks={blocks}
+                actTemplates={actTemplates}
+                setActTemplates={setActTemplates}
+                workflowRules={workflowRules}
+                setWorkflowRules={setWorkflowRules}
+                commissionMembers={commissionMembers}
+                setCommissionMembers={setCommissionMembers}
+                vendors={vendors}
+                setVendors={setVendors}
+                gedPolicy={gedPolicy}
+                setGedPolicy={setGedPolicy}
+                auditLogs={auditLogs}
+                onPublishNow={() => void handlePublishStudio()}
+              />
+            )}
+
+            {/* STUDIO FIGMA / CMS LIVE CANVAS (HAUTE LISIBILITÉ A4 + EN-TÊTE/PIED PRÉCIS) */}
             {section === 'STUDIO_FIGMA' && (
               <div
                 className={`rounded-2xl border-2 bg-white p-6 sm:p-10 shadow-lg transition-all ${
@@ -1354,12 +1613,20 @@ export function AdminStudioWorkspace({
                         : '1rem',
                 }}
               >
-                <div
-                  className="mb-6 h-2 w-full rounded-full"
-                  style={{
-                    background: `linear-gradient(90deg, ${identity.primaryColor}, ${identity.accentColor})`,
-                  }}
-                />
+                {identity.showTricolorBar !== false ? (
+                  <div className="mb-5 grid h-1.5 w-full grid-cols-3 overflow-hidden rounded-full">
+                    <span className="bg-[#007A5E]" />
+                    <span className="bg-[#CE1126]" />
+                    <span className="bg-[#FCD116]" />
+                  </div>
+                ) : (
+                  <div
+                    className="mb-5 h-1.5 w-full rounded-full"
+                    style={{
+                      background: `linear-gradient(90deg, ${identity.primaryColor}, ${identity.accentColor})`,
+                    }}
+                  />
+                )}
 
                 <div className="space-y-4">
                   {[...blocks]
@@ -1371,6 +1638,16 @@ export function AdminStudioWorkspace({
                           ? SAMPLE_BODY_PRESETS[sampleDocType]
                           : blk.customText ?? '';
 
+                      const footerContacts = [
+                        identity.footerPostalAddress,
+                        identity.footerPhysicalAddress,
+                        identity.footerPhone ? `Tél : ${identity.footerPhone}` : '',
+                        identity.footerEmail,
+                        identity.footerWebsite,
+                      ]
+                        .filter(Boolean)
+                        .join(' · ');
+
                       const rendered = renderStudioTemplate(rawTemplate, {
                         entityName: identity.entityName,
                         entityCode: identity.entityCode,
@@ -1380,6 +1657,12 @@ export function AdminStudioWorkspace({
                         signerName: profile.fullName,
                         headerTimbreText: identity.headerTimbreText,
                         footerLegalText: identity.footerLegalText,
+                        tutelleFr: identity.tutelleFr,
+                        emittingServiceFr: identity.emittingServiceFr,
+                        taxRegistrationNumber: identity.taxRegistrationNumber,
+                        footerContacts,
+                        footerBankTreasury: identity.footerBankTreasury,
+                        referencePrefix: identity.referencePrefix,
                       });
 
                       const isSel = blk.id === selectedBlock.id && editMode === 'EDIT';
@@ -1387,6 +1670,33 @@ export function AdminStudioWorkspace({
                         .split('\n')
                         .map((l) => l.trimEnd())
                         .filter((l, i, arr) => l !== '' || (arr[i - 1] ?? '') !== '');
+
+                      const logoBox = (
+                        <div
+                          className="flex h-16 w-16 shrink-0 items-center justify-center overflow-hidden rounded-xl border bg-white shadow-sm"
+                          style={{ borderColor: identity.accentColor }}
+                        >
+                          {identity.logoUrl ? (
+                            <img
+                              src={identity.logoUrl}
+                              alt={identity.entityName}
+                              className="h-full w-full object-contain p-1"
+                            />
+                          ) : identity.logoSvg ? (
+                            <span
+                              className="flex h-full w-full items-center justify-center p-1 [&>svg]:h-full [&>svg]:w-full"
+                              dangerouslySetInnerHTML={{ __html: identity.logoSvg }}
+                            />
+                          ) : (
+                            <span
+                              className="flex h-full w-full items-center justify-center text-xs font-bold text-white"
+                              style={{ backgroundColor: identity.primaryColor }}
+                            >
+                              {identity.entityCode.slice(0, 6)}
+                            </span>
+                          )}
+                        </div>
+                      );
 
                       return (
                         <div
@@ -1411,53 +1721,141 @@ export function AdminStudioWorkspace({
                             </div>
                           )}
 
-                          {/* Bloc 1 : Timbre Officiel */}
+                          {/* Bloc 1 : Timbre Officiel & Tutelle (Bilingue 2 Colonnes OU Centré) */}
                           {blk.id === 'blk_timbre' && (
-                            <div className="text-center space-y-1 border-b border-slate-200 pb-3">
-                              {lines.map((line, idx) => (
-                                <p
-                                  key={idx}
-                                  className={
-                                    idx === 0
-                                      ? 'text-sm sm:text-base font-bold uppercase tracking-widest text-slate-900'
-                                      : 'text-xs sm:text-sm italic text-slate-600'
-                                  }
-                                >
-                                  {line}
-                                </p>
-                              ))}
+                            <div className="border-b border-slate-200 pb-4">
+                              {(identity.headerLayout ?? 'BILINGUAL_SPLIT') === 'BILINGUAL_SPLIT' ? (
+                                <div className="grid grid-cols-1 gap-4 sm:grid-cols-11 items-start">
+                                  {/* Colonne FR */}
+                                  <div className="sm:col-span-5 text-center space-y-0.5">
+                                    {(identity.headerTimbreText || 'RÉPUBLIQUE DU CAMEROUN\nPaix - Travail - Patrie')
+                                      .split('\n')
+                                      .map((line, i) => (
+                                        <p
+                                          key={`fr-${i}`}
+                                          className={
+                                            i === 0
+                                              ? 'text-xs sm:text-sm font-bold uppercase tracking-wider text-slate-900'
+                                              : 'text-[11px] italic text-slate-600'
+                                          }
+                                        >
+                                          {line}
+                                        </p>
+                                      ))}
+                                    <p className="pt-1 text-[10px] font-bold uppercase tracking-wide text-slate-700">
+                                      ----------
+                                    </p>
+                                    {identity.tutelleFr && (
+                                      <p className="text-[11px] font-bold uppercase text-[#0A1F3D]">
+                                        {identity.tutelleFr}
+                                      </p>
+                                    )}
+                                    {identity.regionDeptLineFr && (
+                                      <p className="text-[10px] font-semibold uppercase text-slate-600">
+                                        {identity.regionDeptLineFr}
+                                      </p>
+                                    )}
+                                  </div>
+
+                                  {/* Logo central si DUAL */}
+                                  <div className="sm:col-span-1 flex justify-center pt-1">
+                                    {identity.logoPosition === 'DUAL' ? (
+                                      logoBox
+                                    ) : (
+                                      <div className="hidden h-14 w-px bg-slate-200 sm:block" />
+                                    )}
+                                  </div>
+
+                                  {/* Colonne EN */}
+                                  <div className="sm:col-span-5 text-center space-y-0.5">
+                                    {(identity.headerTimbreTextEn || 'REPUBLIC OF CAMEROON\nPeace - Work - Fatherland')
+                                      .split('\n')
+                                      .map((line, i) => (
+                                        <p
+                                          key={`en-${i}`}
+                                          className={
+                                            i === 0
+                                              ? 'text-xs sm:text-sm font-bold uppercase tracking-wider text-slate-900'
+                                              : 'text-[11px] italic text-slate-600'
+                                          }
+                                        >
+                                          {line}
+                                        </p>
+                                      ))}
+                                    <p className="pt-1 text-[10px] font-bold uppercase tracking-wide text-slate-700">
+                                      ----------
+                                    </p>
+                                    {identity.tutelleEn && (
+                                      <p className="text-[11px] font-bold uppercase text-[#0A1F3D]">
+                                        {identity.tutelleEn}
+                                      </p>
+                                    )}
+                                    {identity.regionDeptLineEn && (
+                                      <p className="text-[10px] font-semibold uppercase text-slate-600">
+                                        {identity.regionDeptLineEn}
+                                      </p>
+                                    )}
+                                  </div>
+                                </div>
+                              ) : (
+                                <div className="text-center space-y-1">
+                                  {(identity.headerLanguage === 'EN'
+                                    ? identity.headerTimbreTextEn || 'REPUBLIC OF CAMEROON\nPeace - Work - Fatherland'
+                                    : identity.headerTimbreText || 'RÉPUBLIQUE DU CAMEROUN\nPaix - Travail - Patrie'
+                                  )
+                                    .split('\n')
+                                    .map((line, idx) => (
+                                      <p
+                                        key={idx}
+                                        className={
+                                          idx === 0
+                                            ? 'text-sm sm:text-base font-bold uppercase tracking-widest text-slate-900'
+                                            : 'text-xs sm:text-sm italic text-slate-600'
+                                        }
+                                      >
+                                        {line}
+                                      </p>
+                                    ))}
+                                  {(identity.headerLanguage === 'EN'
+                                    ? identity.tutelleEn
+                                    : identity.tutelleFr) && (
+                                    <p className="pt-1 text-xs font-bold uppercase text-[#0A1F3D]">
+                                      {identity.headerLanguage === 'EN'
+                                        ? identity.tutelleEn
+                                        : identity.tutelleFr}
+                                    </p>
+                                  )}
+                                  {(identity.headerLanguage === 'EN'
+                                    ? identity.regionDeptLineEn
+                                    : identity.regionDeptLineFr) && (
+                                    <p className="text-[11px] font-semibold uppercase text-slate-600">
+                                      {identity.headerLanguage === 'EN'
+                                        ? identity.regionDeptLineEn
+                                        : identity.regionDeptLineFr}
+                                    </p>
+                                  )}
+                                </div>
+                              )}
                             </div>
                           )}
 
-                          {/* Bloc 2 : Identité Entité & Logo */}
+                          {/* Bloc 2 : Identité Entité, Service Émetteur, NIU & Logo */}
                           {blk.id === 'blk_entity' && (
-                            <div className="flex flex-wrap items-center gap-4 border-b-2 pb-4" style={{ borderColor: identity.primaryColor }}>
-                              <div
-                                className="flex h-16 w-16 shrink-0 items-center justify-center overflow-hidden rounded-xl border bg-white shadow-sm"
-                                style={{ borderColor: identity.accentColor }}
-                              >
-                                {identity.logoUrl ? (
-                                  <img
-                                    src={identity.logoUrl}
-                                    alt={identity.entityName}
-                                    className="h-full w-full object-contain p-1"
-                                  />
-                                ) : identity.logoSvg ? (
-                                  <span
-                                    className="flex h-full w-full items-center justify-center p-1 [&>svg]:h-full [&>svg]:w-full"
-                                    dangerouslySetInnerHTML={{ __html: identity.logoSvg }}
-                                  />
-                                ) : (
-                                  <span
-                                    className="flex h-full w-full items-center justify-center text-sm font-bold text-white"
-                                    style={{ backgroundColor: identity.primaryColor }}
-                                  >
-                                    {identity.entityCode.slice(0, 6)}
-                                  </span>
-                                )}
-                              </div>
+                            <div
+                              className={`flex flex-wrap gap-4 border-b-2 pb-4 ${
+                                identity.logoPosition === 'CENTER'
+                                  ? 'flex-col items-center text-center'
+                                  : 'items-center'
+                              }`}
+                              style={{ borderColor: identity.primaryColor }}
+                            >
+                              {identity.logoPosition !== 'DUAL' && logoBox}
                               <div className="min-w-0 flex-1 space-y-1">
-                                <div className="flex flex-wrap items-center gap-2">
+                                <div
+                                  className={`flex flex-wrap items-center gap-2 ${
+                                    identity.logoPosition === 'CENTER' ? 'justify-center' : ''
+                                  }`}
+                                >
                                   <span
                                     className="rounded px-2 py-0.5 font-sans text-[11px] font-bold uppercase text-white"
                                     style={{ backgroundColor: identity.primaryColor }}
@@ -1467,6 +1865,16 @@ export function AdminStudioWorkspace({
                                   <span className="font-mono text-xs font-semibold text-slate-500">
                                     {identity.entityCode} · {identity.municipality}
                                   </span>
+                                  {identity.taxRegistrationNumber && (
+                                    <span className="rounded bg-slate-100 px-1.5 py-0.5 font-mono text-[10px] text-slate-600">
+                                      NIU : {identity.taxRegistrationNumber}
+                                    </span>
+                                  )}
+                                  {identity.budgetChapterCode && (
+                                    <span className="rounded bg-amber-50 px-1.5 py-0.5 font-mono text-[10px] text-amber-800">
+                                      {identity.budgetChapterCode}
+                                    </span>
+                                  )}
                                 </div>
                                 <h3
                                   className="text-lg sm:text-xl font-bold leading-snug"
@@ -1474,11 +1882,17 @@ export function AdminStudioWorkspace({
                                 >
                                   {identity.entityName}
                                 </h3>
-                                {lines.slice(1).map((line, idx) => (
-                                  <p key={idx} className="text-sm text-slate-700">
-                                    {line}
+                                {identity.emittingServiceFr && (
+                                  <p className="text-xs sm:text-sm font-semibold text-slate-700">
+                                    {identity.emittingServiceFr}
                                   </p>
-                                ))}
+                                )}
+                                {(identity.headerLayout ?? 'BILINGUAL_SPLIT') === 'BILINGUAL_SPLIT' &&
+                                  identity.emittingServiceEn && (
+                                    <p className="text-[11px] italic text-slate-500">
+                                      {identity.emittingServiceEn}
+                                    </p>
+                                  )}
                               </div>
                             </div>
                           )}
@@ -1568,21 +1982,71 @@ export function AdminStudioWorkspace({
                             </div>
                           )}
 
-                          {/* Bloc 6 : Ampliations & Pied de Page Légal */}
+                          {/* Bloc 6 : Ampliations & Pied de Page Institutionnel Complet */}
                           {blk.id === 'blk_ampliations' && (
-                            <div className="border-t border-slate-200 pt-3 space-y-1.5 text-xs sm:text-sm text-slate-600">
-                              {lines.map((line, idx) => (
-                                <p
-                                  key={idx}
-                                  className={
-                                    idx === lines.length - 1
-                                      ? 'pt-2 text-[11px] font-sans text-slate-400 border-t border-slate-100'
-                                      : 'text-slate-700'
-                                  }
-                                >
-                                  {line}
-                                </p>
-                              ))}
+                            <div className="space-y-3 border-t border-slate-200 pt-3">
+                              <div className="space-y-1 text-xs sm:text-sm text-slate-700">
+                                {lines.slice(0, -1).map((line, idx) => (
+                                  <p key={idx}>{line}</p>
+                                ))}
+                              </div>
+
+                              {/* Pied de page officiel structuré */}
+                              <div
+                                className="rounded-xl border border-slate-200 bg-slate-50/80 p-3 font-sans text-[11px] text-slate-600"
+                                style={{ borderTopColor: identity.accentColor, borderTopWidth: '2px' }}
+                              >
+                                <div className="grid gap-2 sm:grid-cols-2">
+                                  <div className="space-y-0.5">
+                                    {identity.footerPostalAddress && (
+                                      <div>
+                                        <strong>Adresse :</strong> {identity.footerPostalAddress}
+                                        {identity.footerPhysicalAddress
+                                          ? ` · ${identity.footerPhysicalAddress}`
+                                          : ''}
+                                      </div>
+                                    )}
+                                    {(identity.footerPhone || identity.footerEmail) && (
+                                      <div>
+                                        <strong>Contact :</strong>{' '}
+                                        {[identity.footerPhone, identity.footerEmail]
+                                          .filter(Boolean)
+                                          .join(' · ')}
+                                      </div>
+                                    )}
+                                    {identity.footerWebsite && (
+                                      <div className="text-slate-500">{identity.footerWebsite}</div>
+                                    )}
+                                  </div>
+                                  <div className="space-y-0.5 sm:text-right">
+                                    {identity.footerBankTreasury && (
+                                      <div>
+                                        <strong>Trésor / Compte :</strong>{' '}
+                                        {identity.footerBankTreasury}
+                                      </div>
+                                    )}
+                                    <div className="text-[10px] text-slate-500">
+                                      {identity.footerLegalText}
+                                    </div>
+                                  </div>
+                                </div>
+                                {(identity.footerShowPageNumbers !== false ||
+                                  identity.footerShowVerificationUrl !== false) && (
+                                  <div className="mt-2 flex flex-wrap items-center justify-between gap-2 border-t border-slate-200 pt-1.5 text-[10px] text-slate-500">
+                                    {identity.footerShowVerificationUrl !== false ? (
+                                      <span className="font-mono">
+                                        Vérification d’authenticité : /verify/SEAL-
+                                        {identity.entityCode}
+                                      </span>
+                                    ) : (
+                                      <span />
+                                    )}
+                                    {identity.footerShowPageNumbers !== false && (
+                                      <span className="font-semibold">Page 1 / 1</span>
+                                    )}
+                                  </div>
+                                )}
+                              </div>
                             </div>
                           )}
 
@@ -1990,186 +2454,506 @@ export function AdminStudioWorkspace({
 
             {section === 'STUDIO_FIGMA' && (
               <div className="space-y-3 text-xs">
-                <div>
-                  <label className="font-semibold text-slate-600">Nom de l’Entité</label>
-                  <input
-                    value={identity.entityName}
-                    onChange={(e) => setIdentity({ ...identity, entityName: e.target.value })}
-                    className="mt-1 w-full rounded-lg border border-slate-300 px-2.5 py-1.5"
-                  />
+                {/* 4 Onglets de Propriétés */}
+                <div className="grid grid-cols-4 gap-1 rounded-xl border border-slate-200 bg-slate-100 p-1 text-[10px] font-bold">
+                  {[
+                    { id: 'IDENTITY', label: 'Identité' },
+                    { id: 'HEADER', label: 'En-tête' },
+                    { id: 'FOOTER', label: 'Pied' },
+                    { id: 'BLOCK', label: 'Bloc' },
+                  ].map((t) => (
+                    <button
+                      key={t.id}
+                      type="button"
+                      onClick={() => setInspectorTab(t.id as typeof inspectorTab)}
+                      className={`rounded-lg py-1.5 transition ${
+                        inspectorTab === t.id
+                          ? 'bg-[#0A1F3D] text-[#D4AF37] shadow-sm'
+                          : 'text-slate-600 hover:bg-white'
+                      }`}
+                    >
+                      {t.label}
+                    </button>
+                  ))}
                 </div>
 
-                {/* Upload Logo Officiel (Studio + En-tête session) */}
-                <div className="rounded-xl border border-slate-200 bg-slate-50 p-3">
-                  <div className="mb-2 flex items-center justify-between">
-                    <span className="font-bold text-[#0A1F3D]">
-                      Logo de l’Entité
-                    </span>
-                    {(identity.logoUrl || identity.logoSvg) && (
-                      <button
-                        type="button"
-                        onClick={() =>
-                          setIdentity((prev) => ({
-                            ...prev,
-                            logoUrl: undefined,
-                            logoSvg: undefined,
-                          }))
-                        }
-                        className="text-[11px] font-semibold text-rose-600 hover:underline"
-                      >
-                        Retirer
-                      </button>
-                    )}
-                  </div>
-                  <div className="flex items-center gap-3">
-                    <div className="flex h-14 w-14 shrink-0 items-center justify-center overflow-hidden rounded-xl border border-slate-300 bg-white">
-                      {identity.logoUrl ? (
-                        <img
-                          src={identity.logoUrl}
-                          alt="Logo entité"
-                          className="h-full w-full object-contain p-1"
-                        />
-                      ) : identity.logoSvg ? (
-                        <span
-                          className="flex h-full w-full items-center justify-center p-1 [&>svg]:h-full [&>svg]:w-full"
-                          dangerouslySetInnerHTML={{ __html: identity.logoSvg }}
-                        />
-                      ) : (
-                        <Building2 className="h-6 w-6 text-slate-400" />
-                      )}
-                    </div>
-                    <label className="flex flex-1 cursor-pointer flex-col items-center justify-center gap-1 rounded-xl border border-dashed border-[#0A1F3D]/40 bg-white px-3 py-2 text-center hover:bg-slate-100">
-                      <span className="inline-flex items-center gap-1.5 font-semibold text-[#0A1F3D]">
-                        <ImagePlus className="h-3.5 w-3.5 text-[#D4AF37]" />
-                        Téléverser un logo
-                      </span>
-                      <span className="text-[10px] text-slate-500">
-                        PNG, JPG, WebP ou SVG
-                      </span>
+                {/* ONGLET 1 : IDENTITÉ & LOGO */}
+                {inspectorTab === 'IDENTITY' && (
+                  <div className="space-y-3">
+                    <div>
+                      <label className="font-semibold text-slate-600">Nom de l’Entité</label>
                       <input
-                        type="file"
-                        accept="image/png,image/jpeg,image/webp,image/svg+xml"
-                        onChange={(e) => {
-                          const f = e.target.files?.[0] ?? null;
-                          void handleLogoFileChange(f);
-                          e.target.value = '';
-                        }}
-                        className="hidden"
+                        value={identity.entityName}
+                        onChange={(e) => setIdentity({ ...identity, entityName: e.target.value })}
+                        className="mt-1 w-full rounded-lg border border-slate-300 px-2.5 py-1.5"
                       />
+                    </div>
+                    <div className="grid grid-cols-2 gap-2">
+                      <div>
+                        <label className="font-semibold text-slate-600">Ville / Siège</label>
+                        <input
+                          value={identity.municipality}
+                          onChange={(e) => setIdentity({ ...identity, municipality: e.target.value })}
+                          className="mt-1 w-full rounded-lg border border-slate-300 px-2 py-1.5"
+                        />
+                      </div>
+                      <div>
+                        <label className="font-semibold text-slate-600">Préfixe Chrono</label>
+                        <input
+                          value={identity.referencePrefix ?? ''}
+                          onChange={(e) => setIdentity({ ...identity, referencePrefix: e.target.value })}
+                          className="mt-1 w-full rounded-lg border border-slate-300 px-2 py-1.5 font-mono"
+                        />
+                      </div>
+                    </div>
+                    <div className="grid grid-cols-2 gap-2">
+                      <div>
+                        <label className="font-semibold text-slate-600">NIU / Matricule</label>
+                        <input
+                          value={identity.taxRegistrationNumber ?? ''}
+                          onChange={(e) =>
+                            setIdentity({ ...identity, taxRegistrationNumber: e.target.value })
+                          }
+                          className="mt-1 w-full rounded-lg border border-slate-300 px-2 py-1.5 font-mono"
+                        />
+                      </div>
+                      <div>
+                        <label className="font-semibold text-slate-600">Chapitre Budgétaire</label>
+                        <input
+                          value={identity.budgetChapterCode ?? ''}
+                          onChange={(e) =>
+                            setIdentity({ ...identity, budgetChapterCode: e.target.value })
+                          }
+                          className="mt-1 w-full rounded-lg border border-slate-300 px-2 py-1.5 font-mono"
+                        />
+                      </div>
+                    </div>
+
+                    {/* Upload Logo Officiel */}
+                    <div className="rounded-xl border border-slate-200 bg-slate-50 p-3">
+                      <div className="mb-2 flex items-center justify-between">
+                        <span className="font-bold text-[#0A1F3D]">Logo de l’Entité</span>
+                        {(identity.logoUrl || identity.logoSvg) && (
+                          <button
+                            type="button"
+                            onClick={() =>
+                              setIdentity((prev) => ({
+                                ...prev,
+                                logoUrl: undefined,
+                                logoSvg: undefined,
+                              }))
+                            }
+                            className="text-[11px] font-semibold text-rose-600 hover:underline"
+                          >
+                            Retirer
+                          </button>
+                        )}
+                      </div>
+                      <div className="flex items-center gap-3">
+                        <div className="flex h-14 w-14 shrink-0 items-center justify-center overflow-hidden rounded-xl border border-slate-300 bg-white">
+                          {identity.logoUrl ? (
+                            <img
+                              src={identity.logoUrl}
+                              alt="Logo entité"
+                              className="h-full w-full object-contain p-1"
+                            />
+                          ) : identity.logoSvg ? (
+                            <span
+                              className="flex h-full w-full items-center justify-center p-1 [&>svg]:h-full [&>svg]:w-full"
+                              dangerouslySetInnerHTML={{ __html: identity.logoSvg }}
+                            />
+                          ) : (
+                            <Building2 className="h-6 w-6 text-slate-400" />
+                          )}
+                        </div>
+                        <label className="flex flex-1 cursor-pointer flex-col items-center justify-center gap-1 rounded-xl border border-dashed border-[#0A1F3D]/40 bg-white px-3 py-2 text-center hover:bg-slate-100">
+                          <span className="inline-flex items-center gap-1.5 font-semibold text-[#0A1F3D]">
+                            <ImagePlus className="h-3.5 w-3.5 text-[#D4AF37]" />
+                            Téléverser un logo
+                          </span>
+                          <span className="text-[10px] text-slate-500">
+                            PNG, JPG, WebP ou SVG
+                          </span>
+                          <input
+                            type="file"
+                            accept="image/png,image/jpeg,image/webp,image/svg+xml"
+                            onChange={(e) => {
+                              const f = e.target.files?.[0] ?? null;
+                              void handleLogoFileChange(f);
+                              e.target.value = '';
+                            }}
+                            className="hidden"
+                          />
+                        </label>
+                      </div>
+                      <div className="mt-2">
+                        <label className="text-[10px] font-semibold text-slate-600">
+                          Position du Logo
+                        </label>
+                        <select
+                          value={identity.logoPosition ?? 'LEFT'}
+                          onChange={(e) =>
+                            setIdentity({
+                              ...identity,
+                              logoPosition: e.target.value as StudioLogoPosition,
+                            })
+                          }
+                          className="mt-0.5 w-full rounded-lg border border-slate-300 bg-white px-2 py-1 text-[11px]"
+                        >
+                          <option value="LEFT">À gauche du nom d’entité</option>
+                          <option value="CENTER">Centré au-dessus du nom</option>
+                          <option value="DUAL">Central entre colonnes FR / EN</option>
+                        </select>
+                      </div>
+                    </div>
+
+                    <div className="grid grid-cols-2 gap-2">
+                      <div>
+                        <label className="font-semibold text-slate-600">Couleur Primaire</label>
+                        <input
+                          type="color"
+                          value={identity.primaryColor}
+                          onChange={(e) =>
+                            setIdentity({ ...identity, primaryColor: e.target.value })
+                          }
+                          className="mt-1 h-9 w-full cursor-pointer rounded-lg border border-slate-300 p-1"
+                        />
+                      </div>
+                      <div>
+                        <label className="font-semibold text-slate-600">Couleur Accent</label>
+                        <input
+                          type="color"
+                          value={identity.accentColor}
+                          onChange={(e) =>
+                            setIdentity({ ...identity, accentColor: e.target.value })
+                          }
+                          className="mt-1 h-9 w-full cursor-pointer rounded-lg border border-slate-300 p-1"
+                        />
+                      </div>
+                    </div>
+                    <div>
+                      <label className="font-semibold text-slate-600">Typographie Officielle</label>
+                      <select
+                        value={identity.typography}
+                        onChange={(e) =>
+                          setIdentity({
+                            ...identity,
+                            typography: e.target.value as 'serif' | 'sans',
+                          })
+                        }
+                        className="mt-1 w-full rounded-lg border border-slate-300 px-2.5 py-1.5"
+                      >
+                        <option value="serif">Classique Administrative (Serif)</option>
+                        <option value="sans">Moderne Numérique (Sans-Serif)</option>
+                      </select>
+                    </div>
+                    <label className="flex items-center gap-2 font-medium text-slate-700">
+                      <input
+                        type="checkbox"
+                        checked={identity.showTricolorBar !== false}
+                        onChange={(e) =>
+                          setIdentity({ ...identity, showTricolorBar: e.target.checked })
+                        }
+                      />
+                      Afficher la barre supérieure tricolore (Vert-Rouge-Jaune)
                     </label>
                   </div>
-                </div>
-              <div className="grid grid-cols-2 gap-2">
-                <div>
-                  <label className="font-semibold text-slate-600">Couleur Primaire</label>
-                  <input
-                    type="color"
-                    value={identity.primaryColor}
-                    onChange={(e) => setIdentity({ ...identity, primaryColor: e.target.value })}
-                    className="mt-1 h-9 w-full cursor-pointer rounded-lg border border-slate-300 p-1"
-                  />
-                </div>
-                <div>
-                  <label className="font-semibold text-slate-600">Couleur Accent</label>
-                  <input
-                    type="color"
-                    value={identity.accentColor}
-                    onChange={(e) => setIdentity({ ...identity, accentColor: e.target.value })}
-                    className="mt-1 h-9 w-full cursor-pointer rounded-lg border border-slate-300 p-1"
-                  />
-                </div>
-              </div>
-              <div>
-                <label className="font-semibold text-slate-600">Typographie Officielle</label>
-                <select
-                  value={identity.typography}
-                  onChange={(e) =>
-                    setIdentity({
-                      ...identity,
-                      typography: e.target.value as 'serif' | 'sans',
-                    })
-                  }
-                  className="mt-1 w-full rounded-lg border border-slate-300 px-2.5 py-1.5"
-                >
-                  <option value="serif">Classique Administrative (Serif)</option>
-                  <option value="sans">Moderne Numérique (Sans-Serif)</option>
-                </select>
-              </div>
-              <div>
-                <label className="font-semibold text-slate-600">Timbre Officiel</label>
-                <textarea
-                  rows={2}
-                  value={identity.headerTimbreText}
-                  onChange={(e) =>
-                    setIdentity({ ...identity, headerTimbreText: e.target.value })
-                  }
-                  className="mt-1 w-full rounded-lg border border-slate-300 p-2 text-[11px]"
-                />
-              </div>
+                )}
 
-              <div className="border-t border-slate-200 pt-3">
-                <div className="flex items-center justify-between">
-                  <span className="font-bold text-[#0A1F3D]">
-                    Bloc sélectionné : {selectedBlock.label}
-                  </span>
-                  <div className="flex gap-1">
-                    <button
-                      type="button"
-                      onClick={() => setBlocks((prev) => moveStudioBlock(prev, selectedBlock.id, 'UP'))}
-                      className="rounded border border-slate-200 p-1 hover:bg-slate-100"
-                    >
-                      <ChevronUp className="h-3 w-3" />
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => setBlocks((prev) => moveStudioBlock(prev, selectedBlock.id, 'DOWN'))}
-                      className="rounded border border-slate-200 p-1 hover:bg-slate-100"
-                    >
-                      <ChevronDown className="h-3 w-3" />
-                    </button>
-                  </div>
-                </div>
-                <textarea
-                  rows={4}
-                  value={selectedBlock.customText ?? ''}
-                  onChange={(e) =>
-                    setBlocks((prev) =>
-                      prev.map((b) =>
-                        b.id === selectedBlock.id ? { ...b, customText: e.target.value } : b
-                      )
-                    )
-                  }
-                  className="mt-2 w-full rounded-lg border border-slate-300 p-2 font-mono text-[11px]"
-                />
-                <div className="mt-2">
-                  <div className="text-[10px] font-bold uppercase text-slate-400">
-                    Variables Dynamiques (1 clic)
-                  </div>
-                  <div className="mt-1 flex flex-wrap gap-1">
-                    {DYNAMIC_STUDIO_VARIABLES.map((v) => (
-                      <button
-                        key={v.token}
-                        type="button"
-                        title={v.label}
-                        onClick={() =>
-                          setBlocks((prev) =>
-                            prev.map((b) =>
-                              b.id === selectedBlock.id
-                                ? { ...b, customText: `${b.customText ?? ''} ${v.token}`.trim() }
-                                : b
-                            )
-                          )
+                {/* ONGLET 2 : EN-TÊTE BILINGUE / CENTRÉ */}
+                {inspectorTab === 'HEADER' && (
+                  <div className="space-y-2.5">
+                    <div>
+                      <label className="font-semibold text-slate-600">Disposition En-tête</label>
+                      <select
+                        value={identity.headerLayout ?? 'BILINGUAL_SPLIT'}
+                        onChange={(e) =>
+                          setIdentity({
+                            ...identity,
+                            headerLayout: e.target.value as StudioHeaderLayout,
+                          })
                         }
-                        className="rounded bg-slate-100 px-1.5 py-0.5 font-mono text-[10px] text-[#0A1F3D] hover:bg-[#0A1F3D] hover:text-white"
+                        className="mt-1 w-full rounded-lg border border-slate-300 px-2.5 py-1.5 font-semibold"
                       >
-                        {v.token}
-                      </button>
-                    ))}
+                        <option value="BILINGUAL_SPLIT">Bilingue 2 Colonnes (FR / EN)</option>
+                        <option value="CENTERED">Monolingue Centré</option>
+                      </select>
+                    </div>
+
+                    {identity.headerLayout === 'CENTERED' && (
+                      <div>
+                        <label className="font-semibold text-slate-600">Langue En-tête Centré</label>
+                        <select
+                          value={identity.headerLanguage ?? 'FR'}
+                          onChange={(e) =>
+                            setIdentity({
+                              ...identity,
+                              headerLanguage: e.target.value as 'FR' | 'EN',
+                            })
+                          }
+                          className="mt-1 w-full rounded-lg border border-slate-300 px-2.5 py-1.5"
+                        >
+                          <option value="FR">Français</option>
+                          <option value="EN">English</option>
+                        </select>
+                      </div>
+                    )}
+
+                    <div>
+                      <label className="font-semibold text-slate-600">Timbre Officiel (FR)</label>
+                      <textarea
+                        rows={2}
+                        value={identity.headerTimbreText}
+                        onChange={(e) =>
+                          setIdentity({ ...identity, headerTimbreText: e.target.value })
+                        }
+                        className="mt-0.5 w-full rounded-lg border border-slate-300 p-2 text-[11px]"
+                      />
+                    </div>
+                    <div>
+                      <label className="font-semibold text-slate-600">Timbre Officiel (EN)</label>
+                      <textarea
+                        rows={2}
+                        value={identity.headerTimbreTextEn ?? ''}
+                        onChange={(e) =>
+                          setIdentity({ ...identity, headerTimbreTextEn: e.target.value })
+                        }
+                        className="mt-0.5 w-full rounded-lg border border-slate-300 p-2 text-[11px]"
+                      />
+                    </div>
+                    <div>
+                      <label className="font-semibold text-slate-600">Tutelle / Ministère (FR)</label>
+                      <input
+                        value={identity.tutelleFr ?? ''}
+                        onChange={(e) => setIdentity({ ...identity, tutelleFr: e.target.value })}
+                        className="mt-0.5 w-full rounded-lg border border-slate-300 px-2 py-1.5 text-[11px]"
+                      />
+                    </div>
+                    <div>
+                      <label className="font-semibold text-slate-600">Tutelle / Ministry (EN)</label>
+                      <input
+                        value={identity.tutelleEn ?? ''}
+                        onChange={(e) => setIdentity({ ...identity, tutelleEn: e.target.value })}
+                        className="mt-0.5 w-full rounded-lg border border-slate-300 px-2 py-1.5 text-[11px]"
+                      />
+                    </div>
+                    <div>
+                      <label className="font-semibold text-slate-600">Région / Département (FR)</label>
+                      <input
+                        value={identity.regionDeptLineFr ?? ''}
+                        onChange={(e) =>
+                          setIdentity({ ...identity, regionDeptLineFr: e.target.value })
+                        }
+                        className="mt-0.5 w-full rounded-lg border border-slate-300 px-2 py-1.5 text-[11px]"
+                      />
+                    </div>
+                    <div>
+                      <label className="font-semibold text-slate-600">Region / Division (EN)</label>
+                      <input
+                        value={identity.regionDeptLineEn ?? ''}
+                        onChange={(e) =>
+                          setIdentity({ ...identity, regionDeptLineEn: e.target.value })
+                        }
+                        className="mt-0.5 w-full rounded-lg border border-slate-300 px-2 py-1.5 text-[11px]"
+                      />
+                    </div>
+                    <div>
+                      <label className="font-semibold text-slate-600">Service Émetteur (FR)</label>
+                      <input
+                        value={identity.emittingServiceFr ?? ''}
+                        onChange={(e) =>
+                          setIdentity({ ...identity, emittingServiceFr: e.target.value })
+                        }
+                        className="mt-0.5 w-full rounded-lg border border-slate-300 px-2 py-1.5 text-[11px]"
+                      />
+                    </div>
+                    <div>
+                      <label className="font-semibold text-slate-600">Emitting Service (EN)</label>
+                      <input
+                        value={identity.emittingServiceEn ?? ''}
+                        onChange={(e) =>
+                          setIdentity({ ...identity, emittingServiceEn: e.target.value })
+                        }
+                        className="mt-0.5 w-full rounded-lg border border-slate-300 px-2 py-1.5 text-[11px]"
+                      />
+                    </div>
                   </div>
-                </div>
+                )}
+
+                {/* ONGLET 3 : PIED DE PAGE COMPLET */}
+                {inspectorTab === 'FOOTER' && (
+                  <div className="space-y-2.5">
+                    <div>
+                      <label className="font-semibold text-slate-600">Adresse Postale (B.P.)</label>
+                      <input
+                        value={identity.footerPostalAddress ?? ''}
+                        onChange={(e) =>
+                          setIdentity({ ...identity, footerPostalAddress: e.target.value })
+                        }
+                        className="mt-0.5 w-full rounded-lg border border-slate-300 px-2 py-1.5"
+                      />
+                    </div>
+                    <div>
+                      <label className="font-semibold text-slate-600">Siège / Localisation</label>
+                      <input
+                        value={identity.footerPhysicalAddress ?? ''}
+                        onChange={(e) =>
+                          setIdentity({ ...identity, footerPhysicalAddress: e.target.value })
+                        }
+                        className="mt-0.5 w-full rounded-lg border border-slate-300 px-2 py-1.5"
+                      />
+                    </div>
+                    <div className="grid grid-cols-2 gap-2">
+                      <div>
+                        <label className="font-semibold text-slate-600">Téléphone</label>
+                        <input
+                          value={identity.footerPhone ?? ''}
+                          onChange={(e) =>
+                            setIdentity({ ...identity, footerPhone: e.target.value })
+                          }
+                          className="mt-0.5 w-full rounded-lg border border-slate-300 px-2 py-1.5"
+                        />
+                      </div>
+                      <div>
+                        <label className="font-semibold text-slate-600">E-mail officiel</label>
+                        <input
+                          value={identity.footerEmail ?? ''}
+                          onChange={(e) =>
+                            setIdentity({ ...identity, footerEmail: e.target.value })
+                          }
+                          className="mt-0.5 w-full rounded-lg border border-slate-300 px-2 py-1.5"
+                        />
+                      </div>
+                    </div>
+                    <div>
+                      <label className="font-semibold text-slate-600">Site Web / Portail</label>
+                      <input
+                        value={identity.footerWebsite ?? ''}
+                        onChange={(e) =>
+                          setIdentity({ ...identity, footerWebsite: e.target.value })
+                        }
+                        className="mt-0.5 w-full rounded-lg border border-slate-300 px-2 py-1.5"
+                      />
+                    </div>
+                    <div>
+                      <label className="font-semibold text-slate-600">
+                        Compte Trésor / Bancaire (DAO)
+                      </label>
+                      <input
+                        value={identity.footerBankTreasury ?? ''}
+                        onChange={(e) =>
+                          setIdentity({ ...identity, footerBankTreasury: e.target.value })
+                        }
+                        className="mt-0.5 w-full rounded-lg border border-slate-300 px-2 py-1.5"
+                      />
+                    </div>
+                    <div>
+                      <label className="font-semibold text-slate-600">Mention Légale &amp; Copyright</label>
+                      <textarea
+                        rows={2}
+                        value={identity.footerLegalText}
+                        onChange={(e) =>
+                          setIdentity({ ...identity, footerLegalText: e.target.value })
+                        }
+                        className="mt-0.5 w-full rounded-lg border border-slate-300 p-2 text-[11px]"
+                      />
+                    </div>
+                    <label className="flex items-center gap-2 font-medium text-slate-700">
+                      <input
+                        type="checkbox"
+                        checked={identity.footerShowPageNumbers !== false}
+                        onChange={(e) =>
+                          setIdentity({ ...identity, footerShowPageNumbers: e.target.checked })
+                        }
+                      />
+                      Pagination automatique (Page 1 / N)
+                    </label>
+                    <label className="flex items-center gap-2 font-medium text-slate-700">
+                      <input
+                        type="checkbox"
+                        checked={identity.footerShowVerificationUrl !== false}
+                        onChange={(e) =>
+                          setIdentity({
+                            ...identity,
+                            footerShowVerificationUrl: e.target.checked,
+                          })
+                        }
+                      />
+                      Lien de vérification publique (/verify)
+                    </label>
+                  </div>
+                )}
+
+                {/* ONGLET 4 : BLOC SÉLECTIONNÉ & VARIABLES */}
+                {inspectorTab === 'BLOCK' && (
+                  <div className="space-y-2">
+                    <div className="flex items-center justify-between">
+                      <span className="font-bold text-[#0A1F3D]">
+                        {selectedBlock.order}. {selectedBlock.label}
+                      </span>
+                      <div className="flex gap-1">
+                        <button
+                          type="button"
+                          onClick={() =>
+                            setBlocks((prev) => moveStudioBlock(prev, selectedBlock.id, 'UP'))
+                          }
+                          className="rounded border border-slate-200 p-1 hover:bg-slate-100"
+                        >
+                          <ChevronUp className="h-3 w-3" />
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() =>
+                            setBlocks((prev) => moveStudioBlock(prev, selectedBlock.id, 'DOWN'))
+                          }
+                          className="rounded border border-slate-200 p-1 hover:bg-slate-100"
+                        >
+                          <ChevronDown className="h-3 w-3" />
+                        </button>
+                      </div>
+                    </div>
+                    <textarea
+                      rows={5}
+                      value={selectedBlock.customText ?? ''}
+                      onChange={(e) =>
+                        setBlocks((prev) =>
+                          prev.map((b) =>
+                            b.id === selectedBlock.id ? { ...b, customText: e.target.value } : b
+                          )
+                        )
+                      }
+                      className="w-full rounded-lg border border-slate-300 p-2 font-mono text-[11px]"
+                    />
+                    <div>
+                      <div className="text-[10px] font-bold uppercase text-slate-400">
+                        Variables Dynamiques (1 clic)
+                      </div>
+                      <div className="mt-1 flex flex-wrap gap-1">
+                        {DYNAMIC_STUDIO_VARIABLES.map((v) => (
+                          <button
+                            key={v.token}
+                            type="button"
+                            title={v.label}
+                            onClick={() =>
+                              setBlocks((prev) =>
+                                prev.map((b) =>
+                                  b.id === selectedBlock.id
+                                    ? { ...b, customText: `${b.customText ?? ''} ${v.token}`.trim() }
+                                    : b
+                                )
+                              )
+                            }
+                            className="rounded bg-slate-100 px-1.5 py-0.5 font-mono text-[10px] text-[#0A1F3D] hover:bg-[#0A1F3D] hover:text-white"
+                          >
+                            {v.token}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                  </div>
+                )}
               </div>
-            </div>
-          )}
+            )}
 
           {section === 'LICENSES_SALES' && (
             <div className="space-y-3 text-xs">

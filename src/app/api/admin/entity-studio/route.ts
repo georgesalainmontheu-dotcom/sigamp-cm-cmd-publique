@@ -68,7 +68,7 @@ export async function GET(req: Request): Promise<Response> {
       ? admin.from('entities').select('*').eq('id', entityId)
       : admin.from('entities').select('*').limit(10);
 
-  const [{ data: entities }, { data: memberships }] = await Promise.all([
+  const [{ data: entities }, { data: memberships }, { data: auditLogs }] = await Promise.all([
     entitiesQuery,
     entityId
       ? admin
@@ -79,6 +79,14 @@ export async function GET(req: Request): Promise<Response> {
           .eq('entity_id', entityId)
           .order('created_at', { ascending: false })
       : Promise.resolve({ data: [] }),
+    entityId
+      ? admin
+          .from('audit_logs')
+          .select('id, action, table_name, actor_role, details, created_at')
+          .eq('entity_id', entityId)
+          .order('created_at', { ascending: false })
+          .limit(40)
+      : Promise.resolve({ data: [] }),
   ]);
 
   return Response.json({
@@ -86,6 +94,7 @@ export async function GET(req: Request): Promise<Response> {
     isEntityAdmin: auth.isEntityAdmin,
     entities: entities ?? [],
     memberships: memberships ?? [],
+    auditLogs: auditLogs ?? [],
   });
 }
 
