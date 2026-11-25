@@ -133,6 +133,30 @@ export const ENTITY_COMMISSION_RULES: Record<EntityType, EntityCommissionRouting
     supportsCccmFinancesFc: false,
     legalBasis: 'CIPM / Commission Spéciale de Passation Projet',
   },
+  PREFECTURE: {
+    defaultCommission: 'CDPM',
+    requiresTutelleControl: false,
+    supportsCccmFinancesFc: false,
+    legalBasis: 'CDPM (Préfet MOD / Ordonnateur Délégué Art. 13 CMP) + Tutelle sur CTD',
+  },
+  GOUVERNORAT: {
+    defaultCommission: 'CRPM',
+    requiresTutelleControl: false,
+    supportsCccmFinancesFc: false,
+    legalBasis: 'CRPM (Gouverneur MOD / Ordonnateur Régional Art. 12 CMP) + Tutelle CTD',
+  },
+  SOUS_PREFECTURE: {
+    defaultCommission: 'CDPM',
+    requiresTutelleControl: true,
+    supportsCccmFinancesFc: false,
+    legalBasis: 'CDPM Départementale auprès du Préfet (Art. 13 CMP)',
+  },
+  MISSION_DIPLOMATIQUE: {
+    defaultCommission: 'CIPM',
+    requiresTutelleControl: false,
+    supportsCccmFinancesFc: false,
+    legalBasis: 'Commission Spéciale / Régime spécifique Postes Diplomatiques (Art. 50 CMP)',
+  },
 };
 
 export interface ProcurementRoutingInput {

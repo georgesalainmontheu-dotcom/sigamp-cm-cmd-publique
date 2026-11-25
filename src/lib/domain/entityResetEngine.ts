@@ -8,6 +8,9 @@
  */
 
 export const PURGE_OPERATIONAL_TABLES_ORDERED = [
+  'ged_document_versions',
+  'ged_documents',
+  'ged_folders',
   'receptions',
   'indemnity_liquidations',
   'disputes',

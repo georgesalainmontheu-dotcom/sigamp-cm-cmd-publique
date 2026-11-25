@@ -141,6 +141,15 @@ export function AdminStudioWorkspace({
   const [newEntType, setNewEntType] = useState<EntityType>('COMMUNE');
   const [newEntCity, setNewEntCity] = useState('Bafoussam');
 
+  // Création & Edition CMS Utilisateur Auth
+  const [cmsUserEmail, setCmsUserEmail] = useState('');
+  const [cmsUserName, setCmsUserName] = useState('');
+  const [cmsUserPass, setCmsUserPass] = useState('Sigamp@2026!');
+  const [cmsUserRole, setCmsUserRole] = useState<RbacRole>('SIGAMP');
+  const [cmsUserGrade, setCmsUserGrade] = useState('');
+  const [cmsUserMatricule, setCmsUserMatricule] = useState('');
+  const [cmsResetPass, setCmsResetPass] = useState('');
+
   // Studio Figma/CMS State
   const [identity, setIdentity] = useState<EntityVisualIdentity>({
     entityId: profile.entityId,
@@ -439,6 +448,95 @@ export function AdminStudioWorkspace({
     }
   };
 
+  const handleCmsCreateUser = async () => {
+    setErrorBanner(null);
+    setStatusBanner(null);
+    setIsBusy(true);
+    try {
+      const headers = await buildAuthenticatedJsonHeaders();
+      const res = await fetch('/api/admin/users', {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({
+          action: 'CREATE_USER',
+          entityId: selectedEntityId,
+          email: cmsUserEmail,
+          password: cmsUserPass,
+          fullName: cmsUserName,
+          role: cmsUserRole,
+          gradeTitle: cmsUserGrade,
+          matricule: cmsUserMatricule,
+        }),
+      });
+      const json = (await res.json()) as { error?: string; userId?: string };
+      if (!res.ok) {
+        setErrorBanner(json.error ?? 'Échec création compte Auth.');
+      } else {
+        setStatusBanner(`Compte utilisateur ${cmsUserEmail} (${cmsUserRole}) créé avec succès.`);
+        setCmsUserEmail('');
+        setCmsUserName('');
+        await loadEntityData(selectedEntityId);
+      }
+    } finally {
+      setIsBusy(false);
+    }
+  };
+
+  const handleCmsResetPassword = async (userId: string) => {
+    if (!cmsResetPass || cmsResetPass.length < 8) {
+      setErrorBanner('Le nouveau mot de passe doit contenir au moins 8 caractères.');
+      return;
+    }
+    setIsBusy(true);
+    try {
+      const headers = await buildAuthenticatedJsonHeaders();
+      const res = await fetch('/api/admin/users', {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({
+          action: 'RESET_PASSWORD',
+          entityId: selectedEntityId,
+          userId,
+          newPassword: cmsResetPass,
+        }),
+      });
+      const json = (await res.json()) as { error?: string };
+      if (!res.ok) setErrorBanner(json.error ?? 'Erreur réinitialisation mot de passe.');
+      else {
+        setStatusBanner('Mot de passe utilisateur réinitialisé via Supabase Auth Admin.');
+        setCmsResetPass('');
+      }
+    } finally {
+      setIsBusy(false);
+    }
+  };
+
+  const handleCmsRevokeUser = async (mem: AdminMembershipRow) => {
+    setIsBusy(true);
+    try {
+      const headers = await buildAuthenticatedJsonHeaders();
+      const res = await fetch('/api/admin/users', {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({
+          action: 'DELETE_USER_OR_MEMBERSHIP',
+          entityId: selectedEntityId,
+          membershipId: mem.id,
+          userId: mem.user_id,
+          deleteAuthAccount: false,
+        }),
+      });
+      const json = (await res.json()) as { error?: string };
+      if (!res.ok) setErrorBanner(json.error ?? 'Erreur révocation.');
+      else {
+        setMemberships((prev) => prev.filter((m) => m.id !== mem.id));
+        setStatusBanner('Habilitation utilisateur révoquée de cette entité.');
+      }
+    } finally {
+      setIsBusy(false);
+    }
+  };
+
   const handleIssueOrOrderLicense = async (autoActivate: boolean) => {
     setIsBusy(true);
     setErrorBanner(null);
@@ -712,11 +810,15 @@ export function AdminStudioWorkspace({
               className="rounded-lg border border-slate-300 px-2.5 py-1.5"
             >
               <option value="COMMUNE">COMMUNE</option>
+              <option value="PREFECTURE">PREFECTURE (CDPM / MOD)</option>
+              <option value="GOUVERNORAT">GOUVERNORAT (CRPM / MOD)</option>
+              <option value="SOUS_PREFECTURE">SOUS_PREFECTURE</option>
               <option value="COMMUNAUTE_URBAINE">COMMUNAUTE_URBAINE</option>
               <option value="REGION">REGION</option>
               <option value="MINISTERE">MINISTERE</option>
               <option value="EPA">EPA</option>
               <option value="ENTREPRISE_PUBLIQUE">ENTREPRISE_PUBLIQUE</option>
+              <option value="MISSION_DIPLOMATIQUE">MISSION_DIPLOMATIQUE</option>
               <option value="PROJET_PROGRAMME">PROJET_PROGRAMME</option>
             </select>
             <div className="flex gap-2">
@@ -967,18 +1069,88 @@ export function AdminStudioWorkspace({
               </div>
             )}
 
-            {/* LOGINS & ACTIVATION/DÉSACTIVATION */}
+            {/* LOGINS & ACTIVATION/DÉSACTIVATION + CMS UTILISATEURS COMPLET */}
             {section === 'LOGINS_RBAC' && (
-              <div className="space-y-3 rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+              <div className="space-y-4 rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
                 <div className="flex items-center justify-between">
                   <h2 className="text-sm font-bold text-[#0A1F3D]">
-                    Comptes &amp; Logins rattachés à {identity.entityName}
+                    CMS Comptes, Auth &amp; Habilitations RBAC — {identity.entityName}
                   </h2>
                   <span className="rounded-full bg-slate-100 px-2.5 py-0.5 text-[11px] font-semibold text-slate-700">
                     {memberships.filter((m) => m.is_active ?? m.active).length} actif(s) / max{' '}
                     {activeLicense.maxActiveLogins}
                   </span>
                 </div>
+
+                {/* Formulaire création directe compte Supabase Auth + Affectation RBAC */}
+                <div className="rounded-xl border border-slate-200 bg-slate-50 p-3.5 text-xs">
+                  <div className="font-bold text-[#0A1F3D]">
+                    + Créer un compte utilisateur Auth &amp; attribuer un rôle
+                  </div>
+                  <div className="mt-2 grid gap-2 sm:grid-cols-3">
+                    <input
+                      value={cmsUserName}
+                      onChange={(e) => setCmsUserName(e.target.value)}
+                      placeholder="Nom & Prénom complet"
+                      className="rounded-lg border border-slate-300 bg-white px-2.5 py-1.5"
+                    />
+                    <input
+                      value={cmsUserEmail}
+                      onChange={(e) => setCmsUserEmail(e.target.value)}
+                      placeholder="Email institutionnel"
+                      className="rounded-lg border border-slate-300 bg-white px-2.5 py-1.5"
+                    />
+                    <input
+                      value={cmsUserPass}
+                      onChange={(e) => setCmsUserPass(e.target.value)}
+                      placeholder="Mot de passe initial"
+                      className="rounded-lg border border-slate-300 bg-white px-2.5 py-1.5"
+                    />
+                    <select
+                      value={cmsUserRole}
+                      onChange={(e) => setCmsUserRole(e.target.value as RbacRole)}
+                      className="rounded-lg border border-slate-300 bg-white px-2.5 py-1.5"
+                    >
+                      <option value="SIGAMP">SIGAMP</option>
+                      <option value="MO_MOD">MO_MOD (Maire / Préfet / MOD)</option>
+                      <option value="ADMIN_ENTITE">ADMIN_ENTITE</option>
+                      <option value="CPM_PRESIDENT">CPM_PRESIDENT</option>
+                      <option value="SCA_RAPPORTEUR">SCA_RAPPORTEUR</option>
+                      <option value="CONTROLEUR_FINANCIER">CONTROLEUR_FINANCIER</option>
+                      <option value="RECEVEUR_COMPTABLE">RECEVEUR_COMPTABLE</option>
+                      <option value="INGENIEUR_MARCHE">INGENIEUR_MARCHE</option>
+                      <option value="CHEF_SERVICE_MARCHE">CHEF_SERVICE_MARCHE</option>
+                      <option value="TUTELLE_ETAT">TUTELLE_ETAT (Préfecture / Gouvernorat)</option>
+                      <option value="ARMP_OBSERVATEUR">ARMP_OBSERVATEUR</option>
+                      <option value="ARMP_REGULATEUR">ARMP_REGULATEUR</option>
+                      <option value="CCCM">CCCM</option>
+                      <option value="SOUMISSIONNAIRE">SOUMISSIONNAIRE</option>
+                    </select>
+                    <input
+                      value={cmsUserGrade}
+                      onChange={(e) => setCmsUserGrade(e.target.value)}
+                      placeholder="Fonction / Grade"
+                      className="rounded-lg border border-slate-300 bg-white px-2.5 py-1.5"
+                    />
+                    <div className="flex gap-2">
+                      <input
+                        value={cmsUserMatricule}
+                        onChange={(e) => setCmsUserMatricule(e.target.value)}
+                        placeholder="Matricule"
+                        className="w-full rounded-lg border border-slate-300 bg-white px-2.5 py-1.5"
+                      />
+                      <button
+                        type="button"
+                        disabled={isBusy}
+                        onClick={() => void handleCmsCreateUser()}
+                        className="shrink-0 rounded-lg bg-[#0A1F3D] px-3 py-1.5 font-semibold text-white"
+                      >
+                        Créer
+                      </button>
+                    </div>
+                  </div>
+                </div>
+
                 {memberships.length === 0 ? (
                   <p className="text-xs text-slate-500">
                     Connectez-vous avec un compte réel Supabase Auth pour administrer en direct les logins en base de données.
@@ -1003,35 +1175,70 @@ export function AdminStudioWorkspace({
                             </div>
                             <div className="text-[11px] text-slate-500">
                               {mem.user_profiles?.email} · Rôle : <strong>{mem.role}</strong>
+                              {mem.user_profiles?.grade_title ? ` · ${mem.user_profiles.grade_title}` : ''}
                             </div>
                           </div>
-                          <button
-                            type="button"
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              void handleToggleLogin(mem);
-                            }}
-                            className={`inline-flex items-center gap-1.5 rounded-xl px-3 py-1.5 text-[11px] font-bold ${
-                              isActive
-                                ? 'bg-emerald-100 text-emerald-800 hover:bg-emerald-200'
-                                : 'bg-rose-100 text-rose-800 hover:bg-rose-200'
-                            }`}
-                          >
-                            {isActive ? (
-                              <>
-                                <UserCheck className="h-3.5 w-3.5" />
-                                ACTIF (Désactiver)
-                              </>
-                            ) : (
-                              <>
-                                <UserX className="h-3.5 w-3.5" />
-                                DÉSACTIVÉ (Activer)
-                              </>
-                            )}
-                          </button>
+                          <div className="flex flex-wrap items-center gap-1.5">
+                            <button
+                              type="button"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                void handleToggleLogin(mem);
+                              }}
+                              className={`inline-flex items-center gap-1 rounded-xl px-2.5 py-1 text-[11px] font-bold ${
+                                isActive
+                                  ? 'bg-emerald-100 text-emerald-800 hover:bg-emerald-200'
+                                  : 'bg-rose-100 text-rose-800 hover:bg-rose-200'
+                              }`}
+                            >
+                              {isActive ? (
+                                <>
+                                  <UserCheck className="h-3.5 w-3.5" />
+                                  ACTIF
+                                </>
+                              ) : (
+                                <>
+                                  <UserX className="h-3.5 w-3.5" />
+                                  DÉSACTIVÉ
+                                </>
+                              )}
+                            </button>
+                            <button
+                              type="button"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                void handleCmsRevokeUser(mem);
+                              }}
+                              className="rounded-xl border border-rose-200 px-2 py-1 text-[11px] font-semibold text-rose-700 hover:bg-rose-50"
+                              title="Révoquer cette habilitation"
+                            >
+                              Révoquer
+                            </button>
+                          </div>
                         </div>
                       );
                     })}
+
+                    {selectedMembership && (
+                      <div className="mt-3 flex flex-wrap items-center gap-2 rounded-xl border border-slate-200 bg-slate-50 p-3 text-xs">
+                        <span className="font-semibold text-slate-700">
+                          Réinitialiser mot de passe ({selectedMembership.user_profiles?.email}) :
+                        </span>
+                        <input
+                          value={cmsResetPass}
+                          onChange={(e) => setCmsResetPass(e.target.value)}
+                          placeholder="Nouveau mot de passe (>= 8 car.)"
+                          className="rounded-lg border border-slate-300 bg-white px-2.5 py-1"
+                        />
+                        <button
+                          type="button"
+                          onClick={() => void handleCmsResetPassword(selectedMembership.user_id)}
+                          className="rounded-lg bg-[#0A1F3D] px-3 py-1 font-semibold text-white"
+                        >
+                          Appliquer
+                        </button>
+                      </div>
+                    )}
                   </div>
                 )}
               </div>

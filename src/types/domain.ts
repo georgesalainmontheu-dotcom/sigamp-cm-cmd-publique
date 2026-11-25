@@ -5,12 +5,16 @@
 
 export type EntityType =
   | 'MINISTERE'
+  | 'PREFECTURE'
+  | 'GOUVERNORAT'
+  | 'SOUS_PREFECTURE'
   | 'COMMUNE'
   | 'COMMUNAUTE_URBAINE'
   | 'REGION'
   | 'EPA'
   | 'ENTREPRISE_PUBLIQUE'
-  | 'PROJET_PROGRAMME';
+  | 'PROJET_PROGRAMME'
+  | 'MISSION_DIPLOMATIQUE';
 
 export type RbacRole =
   | 'SUPER_ADMIN'

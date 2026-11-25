@@ -2,8 +2,10 @@
 
 import {
   AlertTriangle,
+  Archive,
   Building2,
   CloudOff,
+  FileText,
   LogOut,
   Palette,
   RefreshCw,
@@ -37,6 +39,10 @@ import {
   AdminStudioWorkspace,
   type StudioPublishedPayload,
 } from '../workspaces/AdminStudioWorkspace';
+import { DocumentFactoryWorkspace } from '../workspaces/DocumentFactoryWorkspace';
+import { GedArchiveWorkspace } from '../workspaces/GedArchiveWorkspace';
+
+type OverlayWorkspaceMode = 'NONE' | 'GED' | 'FACTORY' | 'STUDIO';
 
 interface AppShellProps {
   activeSpace: WorkspaceSpaceId;
@@ -51,7 +57,7 @@ interface AppShellProps {
 export function AppShell({ activeSpace, onSelectSpace, children }: AppShellProps) {
   const router = useRouter();
   const [aiOpen, setAiOpen] = useState(false);
-  const [studioOpen, setStudioOpen] = useState(false);
+  const [overlayMode, setOverlayMode] = useState<OverlayWorkspaceMode>('NONE');
   const [studioOverride, setStudioOverride] = useState<StudioPublishedPayload | null>(null);
   const sync = useOfflineSyncStatus();
   const demoMode = isDemoRoleSwitcherEnabled();
@@ -202,7 +208,7 @@ export function AppShell({ activeSpace, onSelectSpace, children }: AppShellProps
                   SIGAMP-CM
                 </span>
                 <span className="rounded bg-gov-gold/20 px-1.5 py-0.5 text-[10px] font-semibold text-gov-gold">
-                  CMP 2018/366 · V2.1 Élargie
+                  CMP 2018/366 · V3.0 Élargie
                 </span>
                 {demoMode && (
                   <span className="rounded bg-amber-400/20 px-1.5 py-0.5 text-[10px] font-semibold text-amber-200">
@@ -218,18 +224,44 @@ export function AppShell({ activeSpace, onSelectSpace, children }: AppShellProps
           </div>
 
           <div className="flex flex-wrap items-center gap-2">
+            <button
+              type="button"
+              onClick={() => setOverlayMode((m) => (m === 'GED' ? 'NONE' : 'GED'))}
+              className={`inline-flex items-center gap-1.5 rounded-xl border px-3 py-2 text-xs font-semibold transition ${
+                overlayMode === 'GED'
+                  ? 'border-emerald-400 bg-emerald-500 text-slate-950'
+                  : 'border-white/20 bg-white/10 text-white hover:bg-white/20'
+              }`}
+            >
+              <Archive className="h-3.5 w-3.5" />
+              <span>GED Régalienne</span>
+            </button>
+
+            <button
+              type="button"
+              onClick={() => setOverlayMode((m) => (m === 'FACTORY' ? 'NONE' : 'FACTORY'))}
+              className={`inline-flex items-center gap-1.5 rounded-xl border px-3 py-2 text-xs font-semibold transition ${
+                overlayMode === 'FACTORY'
+                  ? 'border-[#D4AF37] bg-[#D4AF37] text-[#0A1F3D]'
+                  : 'border-white/20 bg-white/10 text-white hover:bg-white/20'
+              }`}
+            >
+              <FileText className="h-3.5 w-3.5 text-gov-gold" />
+              <span>44 Actes &amp; DTAO / DC</span>
+            </button>
+
             {canAccessStudio && (
               <button
                 type="button"
-                onClick={() => setStudioOpen((v) => !v)}
+                onClick={() => setOverlayMode((m) => (m === 'STUDIO' ? 'NONE' : 'STUDIO'))}
                 className={`inline-flex items-center gap-1.5 rounded-xl border px-3 py-2 text-xs font-semibold transition ${
-                  studioOpen
+                  overlayMode === 'STUDIO'
                     ? 'border-[#D4AF37] bg-[#D4AF37] text-[#0A1F3D]'
                     : 'border-[#D4AF37]/50 bg-[#D4AF37]/15 text-[#D4AF37] hover:bg-[#D4AF37]/25'
                 }`}
               >
                 <Palette className="h-3.5 w-3.5" />
-                <span>{studioOpen ? 'Retour Espace Métier' : 'Studio & Admin V2.1'}</span>
+                <span>{overlayMode === 'STUDIO' ? 'Retour Espace Métier' : 'Studio & CMS V3.0'}</span>
               </button>
             )}
 
@@ -332,13 +364,13 @@ export function AppShell({ activeSpace, onSelectSpace, children }: AppShellProps
               {demoMode ? 'Espace RBAC (Démo) :' : 'Vos habilitations :'}
             </span>
             {availableProfiles.map((p) => {
-              const active = !studioOpen && p.spaceId === activeProfile.spaceId;
+              const active = overlayMode === 'NONE' && p.spaceId === activeProfile.spaceId;
               return (
                 <button
                   key={`${p.spaceId}-${p.roleCode}`}
                   type="button"
                   onClick={() => {
-                    setStudioOpen(false);
+                    setOverlayMode('NONE');
                     onSelectSpace(p.spaceId);
                   }}
                   className={`shrink-0 rounded-lg px-3 py-1.5 text-xs font-medium transition ${
@@ -375,7 +407,13 @@ export function AppShell({ activeSpace, onSelectSpace, children }: AppShellProps
         <div className="mx-auto flex max-w-7xl flex-wrap items-center justify-between gap-2 px-4 py-2.5 text-xs text-slate-600 sm:px-6">
           <div>
             <span className="font-semibold text-gov-navy">
-              {studioOpen ? 'Studio CMS & Double Gouvernance (V2.1)' : activeProfile.label}
+              {overlayMode === 'STUDIO'
+                ? 'Studio CMS & Double Gouvernance (V3.0)'
+                : overlayMode === 'GED'
+                  ? 'GED Régalienne & Coffre-Fort Numérique (6 Chemises)'
+                  : overlayMode === 'FACTORY'
+                    ? 'Usine Documentaire V3.0 (44 Actes, DTAO Intégral & Demande de Cotation)'
+                    : activeProfile.label}
             </span>
             <span className="mx-2 text-slate-300">|</span>
             <span>
@@ -399,11 +437,15 @@ export function AppShell({ activeSpace, onSelectSpace, children }: AppShellProps
 
       {/* Contenu principal de l'espace */}
       <main className="mx-auto w-full max-w-7xl flex-1 px-4 py-6 sm:px-6">
-        {studioOpen ? (
+        {overlayMode === 'STUDIO' ? (
           <AdminStudioWorkspace
             profile={activeProfile}
             onStudioPublished={(pub) => setStudioOverride(pub)}
           />
+        ) : overlayMode === 'GED' ? (
+          <GedArchiveWorkspace profile={activeProfile} />
+        ) : overlayMode === 'FACTORY' ? (
+          <DocumentFactoryWorkspace profile={activeProfile} />
         ) : (
           children({
             profile: activeProfile,

@@ -1,0 +1,82 @@
+[
+  {
+    "slug": "dtao_travaux_2024",
+    "title": "DTAO Marchés de Travaux (Version 2024)",
+    "kind": "TRAVAUX",
+    "pdfPath": "/official-docs/dtao/DTAO_Travaux_2024.pdf",
+    "totalPages": 163,
+    "jsonSizeKb": 286
+  },
+  {
+    "slug": "dtao_travaux_officiel",
+    "title": "DTAO Marchés de Travaux (Arrêté 038/PM)",
+    "kind": "TRAVAUX",
+    "pdfPath": "/official-docs/dtao/DTAO_Travaux.pdf",
+    "totalPages": 118,
+    "jsonSizeKb": 234
+  },
+  {
+    "slug": "dtao_fournitures_locales",
+    "title": "DTAO Fournitures Achetées Localement",
+    "kind": "FOURNITURES",
+    "pdfPath": "/official-docs/dtao/DTAO_Fournitures_Locales.pdf",
+    "totalPages": 108,
+    "jsonSizeKb": 206
+  },
+  {
+    "slug": "dtao_fournitures_importees",
+    "title": "DTAO Fournitures Importées",
+    "kind": "FOURNITURES",
+    "pdfPath": "/official-docs/dtao/DTAO_Fournitures_Importees.pdf",
+    "totalPages": 104,
+    "jsonSizeKb": 208
+  },
+  {
+    "slug": "dtao_services_pi_2024",
+    "title": "DTAO Services Non Quantifiables & Prestations Intellectuelles (2024)",
+    "kind": "PRESTATIONS_INTELLECTUELLES",
+    "pdfPath": "/official-docs/dtao/DTAO_Services_Prestations_Intellectuelles_2024.pdf",
+    "totalPages": 175,
+    "jsonSizeKb": 319
+  },
+  {
+    "slug": "dt_demande_cotation",
+    "title": "Dossier Type de Demande de Cotation (Prestations Éligibles)",
+    "kind": "DC_COTATION",
+    "pdfPath": "/official-docs/dtao/DT_Demande_Cotation_ARMP.pdf",
+    "totalPages": 171,
+    "jsonSizeKb": 353
+  },
+  {
+    "slug": "recueil_facilitation_2023",
+    "title": "Recueil Officiel ARMP des Documents de Facilitation (2023)",
+    "kind": "FACILITATION",
+    "pdfPath": "/official-docs/laws/Recueil_Documents_Facilitation_ARMP_2023.pdf",
+    "totalPages": 83,
+    "jsonSizeKb": 137
+  },
+  {
+    "slug": "decret_2018_366",
+    "title": "Décret n° 2018/366 du 20 juin 2018 portant Code des Marchés Publics",
+    "kind": "LAW_CMP",
+    "pdfPath": "/official-docs/laws/Decret_2018_366_Code_Marches_Publics.pdf",
+    "totalPages": 98,
+    "jsonSizeKb": 235
+  },
+  {
+    "slug": "manuel_passation_2023",
+    "title": "Manuel des Procédures de Passation des Marchés Publics (ARMP)",
+    "kind": "LAW_MANUEL",
+    "pdfPath": "/official-docs/laws/Manuel_Procedures_Passation_ARMP_2023.pdf",
+    "totalPages": 42,
+    "jsonSizeKb": 94
+  },
+  {
+    "slug": "guide_regulation_2023",
+    "title": "Guide de la Régulation des Marchés Publics (ARMP)",
+    "kind": "LAW_GUIDE",
+    "pdfPath": "/official-docs/laws/Guide_Regulation_ARMP_2023.pdf",
+    "totalPages": 79,
+    "jsonSizeKb": 177
+  }
+]
