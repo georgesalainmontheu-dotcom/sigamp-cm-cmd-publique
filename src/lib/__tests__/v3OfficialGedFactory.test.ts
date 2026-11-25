@@ -1,5 +1,14 @@
 import { describe, expect, it } from 'vitest';
 import {
+  buildBpuTableRows,
+  buildDqeTableRows,
+  computeBpuDqeSummary,
+  exportBpuToCsv,
+  getPresetBpuLines,
+  numberToFrenchWordsFcfa,
+  parseBpuFromCsv,
+} from '../domain/bpuDqeEngine';
+import {
   buildAuditDossierCoverPdf,
   GED_FOLDER_DEFINITIONS,
   resolveGedFolderForAct,
@@ -208,5 +217,48 @@ describe('SIGAMP-CM V3.0 — Préfectures, GED Régalienne, 44 Actes, DTAO/DC In
       documents: sampleDocs,
     });
     expect(cover.sha256).toMatch(/^[a-f0-9]{64}$/);
+  });
+
+  it('calcule un BPU/DQE structuré (lettres + TVA 19,25% + AIR CGI + CSV) et l’exporte en PDF vectoriel & DOCX', async () => {
+    expect(numberToFrenchWordsFcfa(15_500)).toBe('quinze mille cinq cents francs CFA');
+    expect(numberToFrenchWordsFcfa(1_000_080)).toBe('un million quatre-vingts francs CFA');
+
+    const preset = getPresetBpuLines('FOURNITURES');
+    const summary = computeBpuDqeSummary(preset, { fiscalRegime: 'REEL' });
+    expect(summary.totalHt).toBe(17_030_000);
+    expect(summary.tvaAmount).toBe(Math.round(17_030_000 * 0.1925));
+    expect(summary.airAmount).toBe(Math.round(17_030_000 * 0.022));
+    expect(summary.netToOrder).toBe(summary.totalHt - summary.airAmount);
+
+    const csv = exportBpuToCsv(preset);
+    const reparsed = parseBpuFromCsv(csv);
+    expect(reparsed).toHaveLength(preset.length);
+    expect(reparsed[0]!.unitPriceHt).toBe(45_000);
+
+    const bpuTable = buildBpuTableRows(summary, false);
+    const dqeTable = buildDqeTableRows(summary, false);
+    expect(bpuTable[1]![4]).toBe('quarante-cinq mille francs CFA');
+    expect(dqeTable.some((r) => r[1]?.includes('NET À MANDATER'))).toBe(true);
+
+    const pdfOut = await buildMultiPageOfficialPdf({
+      documentCategory: 'BPU_DQE_ESTIMATIF',
+      documentNumber: '011/DC/C-BAF/2026',
+      title: 'BPU / DQE Fourniture tables-bancs Bafang',
+      entityId: '11111111-1111-4111-8111-111111111111',
+      entityName: 'Commune de Bafang',
+      entityCode: 'CM-OU-BAF',
+      city: 'Bafang',
+      signatoryTitle: 'Le Maire / Autorité Contractante',
+      signatoryName: 'Commune de Bafang',
+      actorUserId: 'u-1',
+      actorRole: 'SIGAMP',
+      sections: [{ heading: 'NOTE', body: 'Tableau officiel ARMP.' }],
+      tables: [
+        { title: 'BPU', rows: bpuTable },
+        { title: 'DQE', rows: dqeTable },
+      ],
+    });
+    expect(pdfOut.pageCount).toBeGreaterThanOrEqual(1);
+    expect(Buffer.from(pdfOut.pdfBytes.slice(0, 5)).toString('ascii')).toBe('%PDF-');
   });
 });

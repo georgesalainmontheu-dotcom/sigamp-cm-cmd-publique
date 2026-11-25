@@ -2,15 +2,27 @@
 
 import {
   BookOpen,
+  Calculator,
   CheckCircle2,
   Download,
   FileSpreadsheet,
   FileText,
+  Plus,
   Scale,
   Search,
   Sparkles,
+  Trash2,
+  Upload,
 } from 'lucide-react';
 import { useMemo, useState } from 'react';
+import {
+  computeBpuDqeSummary,
+  exportBpuToCsv,
+  getPresetBpuLines,
+  numberToFrenchWordsFcfa,
+  parseBpuFromCsv,
+  type BpuDqeLineItem,
+} from '../../lib/domain/bpuDqeEngine';
 import {
   OFFICIAL_DTAO_LIST,
   OFFICIAL_LEGAL_LIBRARY_LIST,
@@ -96,6 +108,15 @@ export function DocumentFactoryWorkspace({ profile }: { profile: ActiveRoleProfi
     Array<{ page: number; text: string }>
   >([]);
   const [legalTotalMatches, setLegalTotalMatches] = useState<number>(0);
+
+  // Éditeur Structuré BPU / DQE (V3.1)
+  const [bpuItems, setBpuItems] = useState<BpuDqeLineItem[]>(() => getPresetBpuLines('TRAVAUX'));
+  const [blankBidderTables, setBlankBidderTables] = useState(false);
+
+  const bpuSummary = useMemo(
+    () => computeBpuDqeSummary(bpuItems, { fiscalRegime }),
+    [bpuItems, fiscalRegime]
+  );
 
   const filteredActs = useMemo(() => {
     if (roleFilter === 'ALL') return PARAMETRIC_ACTS_CATALOG_44;
@@ -250,6 +271,8 @@ export function DocumentFactoryWorkspace({ profile }: { profile: ActiveRoleProfi
             daoPurchasePriceFcfa: daoPriceFcfa,
             fiscalRegime,
             isUrgency,
+            bpuItems,
+            blankBidderTables,
           },
         }),
       });
@@ -273,6 +296,53 @@ export function DocumentFactoryWorkspace({ profile }: { profile: ActiveRoleProfi
       );
     } catch (err) {
       setFeedback(err instanceof Error ? err.message : 'Erreur export DTAO/DC.');
+    } finally {
+      setExporting(false);
+    }
+  };
+
+  const handleExportBpuStandalone = async (format: 'pdf' | 'docx') => {
+    setExporting(true);
+    setFeedback(null);
+    try {
+      const headers = await buildAuthenticatedJsonHeaders();
+      const res = await fetch('/api/documents/generate', {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({
+          mode: 'BPU_DQE_STANDALONE',
+          format,
+          entityId: profile.entityId,
+          archiveInGed,
+          primaryColorHex: profile.primaryColor,
+          accentColorHex: profile.accentColor,
+          entityName: profile.entityName,
+          entityCode: profile.entityCode,
+          city,
+          consultationNumber: chronoNumber,
+          projectTitle,
+          fiscalRegime,
+          blankForBidder: blankBidderTables,
+          items: bpuItems,
+        }),
+      });
+      const json = (await res.json()) as {
+        error?: string;
+        fileName?: string;
+        mimeType?: string;
+        base64?: string;
+        sha256?: string;
+      };
+      if (!res.ok || !json.base64 || !json.fileName || !json.mimeType) {
+        setFeedback(`Erreur export BPU/DQE : ${json.error ?? 'Réponse incomplète'}`);
+        return;
+      }
+      triggerBase64Download(json.base64, json.fileName, json.mimeType);
+      setFeedback(
+        `Extrait BPU + DQE ${json.fileName} généré (${format.toUpperCase()}) · SHA-256 : ${json.sha256?.slice(0, 16)}...`
+      );
+    } catch (err) {
+      setFeedback(err instanceof Error ? err.message : 'Erreur export BPU/DQE.');
     } finally {
       setExporting(false);
     }
@@ -680,6 +750,315 @@ export function DocumentFactoryWorkspace({ profile }: { profile: ActiveRoleProfi
                 </div>
               );
             })}
+          </div>
+
+          {/* EDITEUR STRUCTURE BPU / DQE (PIECES IV & V ARMP) */}
+          <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+            <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-100 pb-3">
+              <div>
+                <div className="flex items-center gap-2">
+                  <Calculator className="h-4 w-4 text-gov-gold" />
+                  <h3 className="text-sm font-bold text-gov-navy">
+                    Éditeur Structuré BPU / DQE (Pièces IV &amp; V — Demande de Cotation &amp; DTAO)
+                  </h3>
+                </div>
+                <p className="mt-0.5 text-[11px] text-slate-500">
+                  Conversion automatique en toutes lettres (ARMP) + calcul HT / TVA 19,25 % / TTC / AIR / Net à mandater.
+                </p>
+              </div>
+              <div className="flex flex-wrap items-center gap-1.5">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setNature('TRAVAUX');
+                    setBpuItems(getPresetBpuLines('TRAVAUX'));
+                  }}
+                  className="rounded-lg border border-slate-200 bg-slate-50 px-2.5 py-1 text-[11px] font-semibold text-slate-700 hover:bg-slate-100"
+                >
+                  Modèle Travaux
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setNature('FOURNITURES');
+                    setBpuItems(getPresetBpuLines('FOURNITURES'));
+                  }}
+                  className="rounded-lg border border-slate-200 bg-slate-50 px-2.5 py-1 text-[11px] font-semibold text-slate-700 hover:bg-slate-100"
+                >
+                  Modèle Fournitures
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setNature('SERVICES_QUANTIFIABLES');
+                    setBpuItems(getPresetBpuLines('SERVICES_QUANTIFIABLES'));
+                  }}
+                  className="rounded-lg border border-slate-200 bg-slate-50 px-2.5 py-1 text-[11px] font-semibold text-slate-700 hover:bg-slate-100"
+                >
+                  Modèle Services
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    const csv = exportBpuToCsv(bpuItems);
+                    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+                    const url = URL.createObjectURL(blob);
+                    const a = document.createElement('a');
+                    a.href = url;
+                    a.download = `BPU_DQE_${projectCode}.csv`;
+                    a.click();
+                    URL.revokeObjectURL(url);
+                  }}
+                  className="inline-flex items-center gap-1 rounded-lg border border-slate-200 px-2.5 py-1 text-[11px] font-semibold text-gov-navy hover:bg-slate-50"
+                >
+                  <Download className="h-3 w-3" />
+                  Export CSV
+                </button>
+                <label className="inline-flex cursor-pointer items-center gap-1 rounded-lg border border-slate-200 px-2.5 py-1 text-[11px] font-semibold text-gov-navy hover:bg-slate-50">
+                  <Upload className="h-3 w-3" />
+                  Import CSV
+                  <input
+                    type="file"
+                    accept=".csv,.txt"
+                    className="hidden"
+                    onChange={async (e) => {
+                      const f = e.target.files?.[0];
+                      if (!f) return;
+                      const txt = await f.text();
+                      const parsed = parseBpuFromCsv(txt);
+                      if (parsed.length > 0) {
+                        setBpuItems(parsed);
+                        setFeedback(`${parsed.length} lignes importées dans le BPU/DQE.`);
+                      }
+                    }}
+                  />
+                </label>
+              </div>
+            </div>
+
+            <div className="mt-3 overflow-x-auto">
+              <table className="w-full min-w-[720px] text-left text-xs">
+                <thead>
+                  <tr className="border-b border-slate-200 bg-slate-50 text-[11px] font-bold text-gov-navy">
+                    <th className="p-2 w-20">N° Prix</th>
+                    <th className="p-2">Désignation &amp; P.U. en toutes lettres</th>
+                    <th className="p-2 w-20">Unité</th>
+                    <th className="p-2 w-28">P.U. HT (F)</th>
+                    <th className="p-2 w-24">Quantité</th>
+                    <th className="p-2 w-32 text-right">Montant HT (F)</th>
+                    <th className="p-2 w-10"></th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-100">
+                  {bpuItems.map((item, idx) => {
+                    const lineTotal = Math.round((item.unitPriceHt || 0) * (item.quantity || 0));
+                    return (
+                      <tr key={item.id} className="align-top">
+                        <td className="p-1.5">
+                          <input
+                            value={item.priceNumber}
+                            onChange={(e) =>
+                              setBpuItems((prev) =>
+                                prev.map((r, i) =>
+                                  i === idx ? { ...r, priceNumber: e.target.value } : r
+                                )
+                              )
+                            }
+                            className="w-full rounded-lg border border-slate-200 px-2 py-1 font-mono text-xs"
+                          />
+                        </td>
+                        <td className="p-1.5">
+                          <input
+                            value={item.designation}
+                            onChange={(e) =>
+                              setBpuItems((prev) =>
+                                prev.map((r, i) =>
+                                  i === idx ? { ...r, designation: e.target.value } : r
+                                )
+                              )
+                            }
+                            className="w-full rounded-lg border border-slate-200 px-2 py-1 text-xs"
+                          />
+                          <div className="mt-0.5 text-[10px] italic text-slate-500">
+                            En lettres : {numberToFrenchWordsFcfa(item.unitPriceHt)}
+                          </div>
+                        </td>
+                        <td className="p-1.5">
+                          <select
+                            value={item.unit}
+                            onChange={(e) =>
+                              setBpuItems((prev) =>
+                                prev.map((r, i) => (i === idx ? { ...r, unit: e.target.value } : r))
+                              )
+                            }
+                            className="w-full rounded-lg border border-slate-200 px-1.5 py-1 text-xs"
+                          >
+                            {['U', 'Fft', 'Ens', 'm²', 'm³', 'ml', 'kg', 'T', 'J/H', 'Mois'].map(
+                              (u) => (
+                                <option key={u} value={u}>
+                                  {u}
+                                </option>
+                              )
+                            )}
+                          </select>
+                        </td>
+                        <td className="p-1.5">
+                          <input
+                            type="number"
+                            value={item.unitPriceHt}
+                            onChange={(e) =>
+                              setBpuItems((prev) =>
+                                prev.map((r, i) =>
+                                  i === idx
+                                    ? { ...r, unitPriceHt: Number(e.target.value) || 0 }
+                                    : r
+                                )
+                              )
+                            }
+                            className="w-full rounded-lg border border-slate-200 px-2 py-1 text-right font-mono text-xs"
+                          />
+                        </td>
+                        <td className="p-1.5">
+                          <input
+                            type="number"
+                            value={item.quantity}
+                            onChange={(e) =>
+                              setBpuItems((prev) =>
+                                prev.map((r, i) =>
+                                  i === idx
+                                    ? { ...r, quantity: Number(e.target.value) || 0 }
+                                    : r
+                                )
+                              )
+                            }
+                            className="w-full rounded-lg border border-slate-200 px-2 py-1 text-right font-mono text-xs"
+                          />
+                        </td>
+                        <td className="p-2 text-right font-mono font-semibold text-slate-900">
+                          {lineTotal.toLocaleString('fr-FR')}
+                        </td>
+                        <td className="p-1.5 text-center">
+                          <button
+                            type="button"
+                            onClick={() =>
+                              setBpuItems((prev) => prev.filter((_, i) => i !== idx))
+                            }
+                            className="rounded p-1 text-rose-600 hover:bg-rose-50"
+                            title="Supprimer cette ligne"
+                          >
+                            <Trash2 className="h-3.5 w-3.5" />
+                          </button>
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+
+            <div className="mt-3 flex flex-wrap items-center justify-between gap-3">
+              <div className="flex flex-wrap items-center gap-3">
+                <button
+                  type="button"
+                  onClick={() =>
+                    setBpuItems((prev) => [
+                      ...prev,
+                      {
+                        id: `line-${Date.now()}`,
+                        priceNumber: String(100 + prev.length + 1),
+                        designation: 'Nouvelle prestation / fourniture',
+                        unit: 'U',
+                        unitPriceHt: 10_000,
+                        quantity: 1,
+                      },
+                    ])
+                  }
+                  className="inline-flex items-center gap-1 rounded-xl border border-gov-navy px-3 py-1.5 text-xs font-semibold text-gov-navy hover:bg-slate-50"
+                >
+                  <Plus className="h-3.5 w-3.5" />
+                  Ajouter une ligne de prix
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setAmountTtcFcfa(bpuSummary.totalTtc);
+                    setFeedback(
+                      `Montant estimé du marché synchronisé avec le DQE : ${bpuSummary.totalTtc.toLocaleString('fr-FR')} FCFA TTC.`
+                    );
+                  }}
+                  className="rounded-xl bg-gov-gold/20 px-3 py-1.5 text-xs font-semibold text-gov-navy hover:bg-gov-gold/30"
+                >
+                  Appliquer {bpuSummary.totalTtc.toLocaleString('fr-FR')} F TTC au projet
+                </button>
+                <label className="inline-flex items-center gap-1.5 text-xs text-slate-700">
+                  <input
+                    type="checkbox"
+                    checked={blankBidderTables}
+                    onChange={(e) => setBlankBidderTables(e.target.checked)}
+                  />
+                  Tableaux vierges (à remplir par soumissionnaire)
+                </label>
+              </div>
+
+              <div className="flex flex-wrap gap-2">
+                <button
+                  type="button"
+                  disabled={exporting}
+                  onClick={() => void handleExportBpuStandalone('pdf')}
+                  className="inline-flex items-center gap-1 rounded-xl border border-slate-300 bg-white px-3 py-1.5 text-xs font-semibold text-gov-navy hover:bg-slate-50"
+                >
+                  <Download className="h-3.5 w-3.5" />
+                  Extrait BPU + DQE (.pdf)
+                </button>
+                <button
+                  type="button"
+                  disabled={exporting}
+                  onClick={() => void handleExportBpuStandalone('docx')}
+                  className="inline-flex items-center gap-1 rounded-xl border border-slate-300 bg-white px-3 py-1.5 text-xs font-semibold text-gov-navy hover:bg-slate-50"
+                >
+                  <FileSpreadsheet className="h-3.5 w-3.5" />
+                  Extrait BPU + DQE (.docx)
+                </button>
+              </div>
+            </div>
+
+            {/* Récapitulatif financier CGI temps réel */}
+            <div className="mt-4 grid gap-2 rounded-xl border border-slate-200 bg-slate-50 p-3 text-xs sm:grid-cols-5">
+              <div>
+                <div className="text-[10px] font-semibold text-slate-500">TOTAL HT</div>
+                <div className="font-mono font-bold text-slate-900">
+                  {bpuSummary.totalHt.toLocaleString('fr-FR')} F
+                </div>
+              </div>
+              <div>
+                <div className="text-[10px] font-semibold text-slate-500">
+                  TVA ({(bpuSummary.tvaRate * 100).toFixed(2)} %)
+                </div>
+                <div className="font-mono font-bold text-slate-900">
+                  {bpuSummary.tvaAmount.toLocaleString('fr-FR')} F
+                </div>
+              </div>
+              <div>
+                <div className="text-[10px] font-semibold text-slate-500">TOTAL TTC</div>
+                <div className="font-mono font-bold text-gov-navy">
+                  {bpuSummary.totalTtc.toLocaleString('fr-FR')} F
+                </div>
+              </div>
+              <div>
+                <div className="text-[10px] font-semibold text-slate-500">
+                  AIR ({(bpuSummary.airRate * 100).toFixed(1)} %)
+                </div>
+                <div className="font-mono font-bold text-amber-800">
+                  -{bpuSummary.airAmount.toLocaleString('fr-FR')} F
+                </div>
+              </div>
+              <div>
+                <div className="text-[10px] font-semibold text-slate-500">NET À MANDATER</div>
+                <div className="font-mono font-bold text-emerald-800">
+                  {bpuSummary.netToOrder.toLocaleString('fr-FR')} F
+                </div>
+              </div>
+            </div>
           </div>
 
           <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">

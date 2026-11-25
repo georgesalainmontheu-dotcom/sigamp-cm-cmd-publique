@@ -1,4 +1,5 @@
 import type { EntityType, FiscalRegime, ProcurementNature } from '../../types/domain';
+import type { BpuDqeLineItem } from './bpuDqeEngine';
 import { DEFAULT_REGULATORY_DAO_PARAMS, type RegulatoryDaoParams } from './daoAssemblerEngine';
 
 export type OfficialDtaoSlug =
@@ -142,6 +143,8 @@ export interface ContextualDtaoAdaptationInput {
   isUrgency: boolean;
   technicalSummary?: string;
   regulatoryParams?: Partial<RegulatoryDaoParams>;
+  bpuItems?: BpuDqeLineItem[];
+  blankBidderTables?: boolean;
 }
 
 export interface OfficialPageData {

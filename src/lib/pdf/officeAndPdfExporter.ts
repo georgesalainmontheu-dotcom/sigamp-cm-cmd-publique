@@ -38,6 +38,10 @@ export interface MultiPageOfficialPdfInput {
     body: string;
   }>;
   tableRows?: string[][];
+  tables?: Array<{
+    title?: string;
+    rows: string[][];
+  }>;
   ampliations?: string[];
   verificationBaseUrl?: string;
 }
@@ -221,6 +225,103 @@ export async function buildMultiPageOfficialPdf(
     cur.y -= 8;
   }
 
+  // Rendu vectoriel multi-lignes des tableaux structurés (BPU, DQE, etc.)
+  const allTables: Array<{ title?: string; rows: string[][] }> = [
+    ...(input.tables ?? []),
+    ...(input.tableRows && input.tableRows.length > 0 ? [{ rows: input.tableRows }] : []),
+  ];
+
+  for (const tbl of allTables) {
+    if (!tbl.rows || tbl.rows.length === 0) continue;
+    if (tbl.title) {
+      if (cur.y < 110) cur = addPage(false);
+      cur.page.drawText(normalizeFrenchWinAnsi(tbl.title.slice(0, 90)), {
+        x: marginX,
+        y: cur.y,
+        size: 10,
+        font: fontBold,
+        color: primaryColor,
+      });
+      cur.y -= 14;
+    }
+
+    const colCount = Math.max(1, tbl.rows[0]?.length ?? 1);
+    const colWidths =
+      colCount === 5
+        ? [maxWidth * 0.1, maxWidth * 0.36, maxWidth * 0.08, maxWidth * 0.16, maxWidth * 0.3]
+        : colCount === 6
+          ? [
+              maxWidth * 0.09,
+              maxWidth * 0.35,
+              maxWidth * 0.08,
+              maxWidth * 0.12,
+              maxWidth * 0.16,
+              maxWidth * 0.2,
+            ]
+          : Array.from({ length: colCount }, () => maxWidth / colCount);
+
+    for (let rIdx = 0; rIdx < tbl.rows.length; rIdx += 1) {
+      const row = tbl.rows[rIdx]!;
+      const isHeader = rIdx === 0;
+      const isTotalRow = row.some((c) => c.toUpperCase().includes('TOTAL') || c.toUpperCase().includes('NET À MANDATER') || c.toUpperCase().includes('NET A MANDATER'));
+      const rowFont = isHeader || isTotalRow ? fontBold : fontReg;
+      const cellWrapped = row.map((cell, cIdx) =>
+        wrapLines(cell, rowFont, 7.8, Math.max(24, (colWidths[cIdx] ?? 60) - 8))
+      );
+      const maxLines = Math.max(1, ...cellWrapped.map((l) => l.length));
+      const rowHeight = maxLines * 10 + 8;
+
+      if (cur.y - rowHeight < 65) {
+        cur = addPage(false);
+      }
+
+      const rowBottom = cur.y - rowHeight;
+      if (isHeader) {
+        cur.page.drawRectangle({
+          x: marginX,
+          y: rowBottom,
+          width: maxWidth,
+          height: rowHeight,
+          color: primaryColor,
+        });
+      } else if (isTotalRow) {
+        cur.page.drawRectangle({
+          x: marginX,
+          y: rowBottom,
+          width: maxWidth,
+          height: rowHeight,
+          color: rgb(0.94, 0.96, 0.99),
+        });
+      }
+
+      let xCursor = marginX;
+      for (let cIdx = 0; cIdx < colCount; cIdx += 1) {
+        const w = colWidths[cIdx] ?? maxWidth / colCount;
+        cur.page.drawRectangle({
+          x: xCursor,
+          y: rowBottom,
+          width: w,
+          height: rowHeight,
+          borderColor: rgb(0.78, 0.82, 0.88),
+          borderWidth: 0.6,
+        });
+        const lines = cellWrapped[cIdx] ?? [];
+        for (let lIdx = 0; lIdx < lines.length; lIdx += 1) {
+          cur.page.drawText(lines[lIdx] ?? '', {
+            x: xCursor + 4,
+            y: cur.y - 11 - lIdx * 10,
+            size: 7.8,
+            font: rowFont,
+            color: isHeader ? rgb(1, 1, 1) : rgb(0.1, 0.12, 0.16),
+          });
+        }
+        xCursor += w;
+      }
+      cur.y = rowBottom;
+    }
+    cur.y -= 12;
+  }
+
   // Bloc signature + QR Code sur la dernière page
   if (cur.y < 175) cur = addPage(false);
   cur.page.drawLine({
@@ -357,11 +458,25 @@ export async function buildOfficialDocxBuffer(
     }
   }
 
-  if (input.tableRows && input.tableRows.length > 0) {
+  const docxTables: Array<{ title?: string; rows: string[][] }> = [
+    ...(input.tables ?? []),
+    ...(input.tableRows && input.tableRows.length > 0 ? [{ rows: input.tableRows }] : []),
+  ];
+
+  for (const tbl of docxTables) {
+    if (!tbl.rows || tbl.rows.length === 0) continue;
+    if (tbl.title) {
+      children.push(
+        new Paragraph({
+          spacing: { before: 180, after: 80 },
+          children: [new TextRun({ text: tbl.title, bold: true, size: 22, color: '0A1F3D' })],
+        })
+      );
+    }
     children.push(
       new Table({
         width: { size: 100, type: WidthType.PERCENTAGE },
-        rows: input.tableRows.map(
+        rows: tbl.rows.map(
           (row, rIdx) =>
             new TableRow({
               children: row.map(

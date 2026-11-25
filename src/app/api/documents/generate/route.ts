@@ -1,6 +1,13 @@
 import { createClient } from '@supabase/supabase-js';
 import { guardAiApiRequest } from '../../../../lib/security/apiAuthAndRateLimit';
 import {
+  buildBpuTableRows,
+  buildDqeTableRows,
+  computeBpuDqeSummary,
+  formatBpuDqeTextBlock,
+  type BpuDqeLineItem,
+} from '../../../../lib/domain/bpuDqeEngine';
+import {
   renderParametricAct,
   type ParametricAdaptationContext,
 } from '../../../../lib/domain/parametricActsEngine';
@@ -11,6 +18,7 @@ import {
   buildOfficialDocxBuffer,
 } from '../../../../lib/pdf/officeAndPdfExporter';
 import { resolveGedFolderForAct } from '../../../../lib/domain/gedArchiveEngine';
+import type { FiscalRegime } from '../../../../types/domain';
 
 export const runtime = 'nodejs';
 
@@ -44,6 +52,23 @@ type GenerateRequestBody =
       primaryColorHex?: string;
       accentColorHex?: string;
       dtaoInput: ContextualDtaoAdaptationInput;
+    }
+  | {
+      mode: 'BPU_DQE_STANDALONE';
+      format: 'pdf' | 'docx';
+      entityId: string;
+      projectId?: string | null;
+      archiveInGed?: boolean;
+      primaryColorHex?: string;
+      accentColorHex?: string;
+      entityName: string;
+      entityCode: string;
+      city: string;
+      consultationNumber: string;
+      projectTitle: string;
+      fiscalRegime: FiscalRegime;
+      blankForBidder?: boolean;
+      items: BpuDqeLineItem[];
     };
 
 export async function POST(req: Request): Promise<Response> {
@@ -151,6 +176,32 @@ export async function POST(req: Request): Promise<Response> {
         body: p.text,
       }));
 
+      let tables: Array<{ title?: string; rows: string[][] }> | undefined;
+      if (body.dtaoInput.bpuItems && body.dtaoInput.bpuItems.length > 0) {
+        const summary = computeBpuDqeSummary(body.dtaoInput.bpuItems, {
+          fiscalRegime: body.dtaoInput.fiscalRegime,
+        });
+        const blank = Boolean(body.dtaoInput.blankBidderTables);
+        sections.unshift({
+          heading: 'ANNEXE CHIFFREE — BPU / DQE CONTEXTUEL & FISCALITE CGI',
+          body: formatBpuDqeTextBlock(summary),
+        });
+        tables = [
+          {
+            title: blank
+              ? 'PIECE IV — CADRE DU BORDEREAU DES PRIX UNITAIRES (A COMPLETER PAR LE SOUMISSIONNAIRE)'
+              : 'PIECE IV — BORDEREAU DES PRIX UNITAIRES (BPU CHIFFRE)',
+            rows: buildBpuTableRows(summary, blank),
+          },
+          {
+            title: blank
+              ? 'PIECE V — CADRE DU DEVIS QUANTITATIF ET ESTIMATIF (DQE SOUMISSIONNAIRE)'
+              : 'PIECE V — DEVIS QUANTITATIF ET ESTIMATIF (DQE CONFIDENTIEL / ESTIMATION)',
+            rows: buildDqeTableRows(summary, blank),
+          },
+        ];
+      }
+
       const docInput = {
         documentCategory: body.dtaoInput.slug === 'dt_demande_cotation' ? 'DOSSIER_COTATION' : 'DAO_INTEGRAL',
         documentNumber: body.dtaoInput.consultationNumber,
@@ -166,6 +217,7 @@ export async function POST(req: Request): Promise<Response> {
         primaryColorHex: body.primaryColorHex,
         accentColorHex: body.accentColorHex,
         sections,
+        tables,
       };
 
       const exported =
@@ -219,6 +271,99 @@ export async function POST(req: Request): Promise<Response> {
         generatedPages: 'pageCount' in exported ? exported.pageCount : undefined,
         appliedContextSummary: bundle.appliedContextSummary,
         previewPages: bundle.pages.slice(0, 5),
+        base64: Buffer.from(bytes).toString('base64'),
+      });
+    }
+
+    if (body.mode === 'BPU_DQE_STANDALONE') {
+      const summary = computeBpuDqeSummary(body.items, {
+        fiscalRegime: body.fiscalRegime,
+      });
+      const blank = Boolean(body.blankForBidder);
+
+      const docInput = {
+        documentCategory: blank ? 'CADRE_BPU_DQE_VIERGE' : 'BPU_DQE_ESTIMATIF',
+        documentNumber: body.consultationNumber,
+        title: `Pièces IV & V (BPU / DQE) — ${body.projectTitle}`,
+        entityId: body.entityId,
+        entityName: body.entityName,
+        entityCode: body.entityCode,
+        city: body.city,
+        signatoryTitle: "Le Maître d'Ouvrage / Service des Marchés (SIGAMP)",
+        signatoryName: body.entityName,
+        actorUserId: guard.userId,
+        actorRole: 'SIGAMP' as const,
+        primaryColorHex: body.primaryColorHex,
+        accentColorHex: body.accentColorHex,
+        sections: [
+          {
+            heading: 'SYNTHESE FINANCIERE & FISCALITE CGI EN VIGUEUR',
+            body: blank
+              ? `Cadre du BPU et du DQE préparé pour remise aux candidats (${summary.lines.length} postes). En cas de discordance entre le prix unitaire en chiffres et celui en toutes lettres, le prix en toutes lettres fait foi (RGAO/RPDC ARMP).`
+              : formatBpuDqeTextBlock(summary),
+          },
+        ],
+        tables: [
+          {
+            title: 'PIECE IV — BORDEREAU DES PRIX UNITAIRES (BPU)',
+            rows: buildBpuTableRows(summary, blank),
+          },
+          {
+            title: 'PIECE V — DEVIS QUANTITATIF ET ESTIMATIF (DQE)',
+            rows: buildDqeTableRows(summary, blank),
+          },
+        ],
+      };
+
+      const exported =
+        body.format === 'docx'
+          ? await buildOfficialDocxBuffer(docInput)
+          : await buildMultiPageOfficialPdf(docInput);
+      const bytes = 'pdfBytes' in exported ? exported.pdfBytes : exported.docxBytes;
+      const sha256 = 'sha256Seal' in exported ? exported.sha256Seal : exported.sha256;
+      const qrId = 'qrVerificationId' in exported ? exported.qrVerificationId : null;
+
+      if (body.archiveInGed && admin) {
+        await admin.from('ged_documents').insert({
+          entity_id: body.entityId,
+          project_id: body.projectId || null,
+          folder_code: blank ? '02_LANCEMENT_DAO_DC' : '01_MATURATION_BUDGET',
+          document_category: docInput.documentCategory,
+          act_code: 'BPU_DQE_STRUCTURE',
+          title: docInput.title,
+          chrono_number: body.consultationNumber,
+          file_name: exported.fileName,
+          mime_type:
+            body.format === 'docx'
+              ? 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
+              : 'application/pdf',
+          file_size_bytes: bytes.byteLength,
+          sha256_hash: sha256,
+          version_number: 1,
+          lifecycle_status: 'SIGNE_SCELLE',
+          content_text: formatBpuDqeTextBlock(summary),
+          qr_verification_id: qrId,
+          actor_user_id: guard.userId,
+          actor_role: 'SIGAMP',
+          metadata: {
+            mode: 'BPU_DQE_STANDALONE',
+            blank,
+            totalHt: summary.totalHt,
+            totalTtc: summary.totalTtc,
+          },
+        });
+      }
+
+      return Response.json({
+        fileName: exported.fileName,
+        mimeType:
+          body.format === 'docx'
+            ? 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
+            : 'application/pdf',
+        sha256,
+        qrVerificationId: qrId,
+        pageCount: 'pageCount' in exported ? exported.pageCount : undefined,
+        summary,
         base64: Buffer.from(bytes).toString('base64'),
       });
     }
