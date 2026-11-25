@@ -73,6 +73,7 @@ import {
 } from '../../lib/ui/demoProfiles';
 import type { FiscalRegime, ProcurementNature } from '../../types/domain';
 import { PdfPreviewModal } from '../pdf/PdfPreviewModal';
+import { MaturationOrchestratorPanel } from './MaturationOrchestratorPanel';
 
 const STAGE_DEFS = [
   { id: 1, short: '1. Maturation', title: 'Maturation & Géolocalisation (Circ. 001/CAB/PM)' },
@@ -1017,6 +1018,18 @@ export function ValueChainWorkspace({ profile }: { profile: ActiveRoleProfile })
                 </button>
               </div>
             )}
+          </div>
+
+          {/* MOTEUR D'ORCHESTRATION MATURATION -> DÉMARCHE -> SUIVI DES LIVRABLES */}
+          <div className="lg:col-span-12">
+            <MaturationOrchestratorPanel
+              entityId={profile.entityId}
+              entityType={profile.entityType}
+              projectCode={projectCode}
+              projectTitle={projectTitle}
+              nature={nature}
+              estimatedAmountTtc={estimatedAmountTtc}
+            />
           </div>
         </div>
       )}
