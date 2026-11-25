@@ -9,20 +9,37 @@ import {
   Lock,
   RefreshCw,
   ShieldCheck,
+  Sparkles,
   Unlock,
 } from 'lucide-react';
 import { useEffect, useMemo, useState } from 'react';
+import type {
+  CmsCommissionMember,
+  CmsGedPolicyConfig,
+  CmsWorkflowRule,
+} from '../../lib/domain/entityStudioEngine';
 import {
   buildMaturationProcedurePlan,
   computeDeliverablesMetrics,
   updateDeliverableStatus,
   type DeliverableStatus,
   type FundingCategory,
+  type MaturationCmsContext,
   type MaturationProcedureInput,
   type ProcedureDeliverableItem,
   type ProcedureUrgencyMode,
 } from '../../lib/domain/maturationWorkflowEngine';
+import { buildAuthenticatedJsonHeaders } from '../../lib/supabase/client';
 import type { EntityType, ProcurementNature } from '../../types/domain';
+
+export interface SavedOrchestratorState {
+  fundingCategory?: FundingCategory;
+  urgencyMode?: ProcedureUrgencyMode;
+  requiresLandSite?: boolean;
+  requiresEnvironmentalNotice?: boolean;
+  allotted?: boolean;
+  deliverables?: ProcedureDeliverableItem[];
+}
 
 interface MaturationOrchestratorPanelProps {
   entityId: string;
@@ -31,6 +48,18 @@ interface MaturationOrchestratorPanelProps {
   projectTitle: string;
   nature: ProcurementNature;
   estimatedAmountTtc: number;
+  savedWorkflowState?: SavedOrchestratorState;
+  onSyncDeliverables?: (
+    payload: {
+      orchestrator: SavedOrchestratorState;
+    },
+    archiveDeliverableInGed?: {
+      deliverableCode: string;
+      deliverableTitle: string;
+      chronoNumber?: string;
+      responsibleRole?: string;
+    }
+  ) => Promise<{ gedQrId?: string | null } | void>;
 }
 
 const STATUS_BADGE: Record<DeliverableStatus, string> = {
@@ -49,14 +78,82 @@ export function MaturationOrchestratorPanel({
   projectTitle,
   nature,
   estimatedAmountTtc,
+  savedWorkflowState,
+  onSyncDeliverables,
 }: MaturationOrchestratorPanelProps) {
-  const [fundingCategory, setFundingCategory] = useState<FundingCategory>('FEICOM');
-  const [urgencyMode, setUrgencyMode] = useState<ProcedureUrgencyMode>('NORMALE');
-  const [requiresLandSite, setRequiresLandSite] = useState<boolean>(true);
+  const [fundingCategory, setFundingCategory] = useState<FundingCategory>(
+    savedWorkflowState?.fundingCategory ?? 'FEICOM'
+  );
+  const [urgencyMode, setUrgencyMode] = useState<ProcedureUrgencyMode>(
+    savedWorkflowState?.urgencyMode ?? 'NORMALE'
+  );
+  const [requiresLandSite, setRequiresLandSite] = useState<boolean>(
+    savedWorkflowState?.requiresLandSite ?? true
+  );
   const [requiresEnvironmentalNotice, setRequiresEnvironmentalNotice] =
-    useState<boolean>(false);
-  const [allotted, setAllotted] = useState<boolean>(false);
-  const [phaseFilter, setPhaseFilter] = useState<number>(0); // 0 = Toutes
+    useState<boolean>(savedWorkflowState?.requiresEnvironmentalNotice ?? false);
+  const [allotted, setAllotted] = useState<boolean>(
+    savedWorkflowState?.allotted ?? false
+  );
+  const [phaseFilter, setPhaseFilter] = useState<number>(0);
+  const [cmsContext, setCmsContext] = useState<MaturationCmsContext | undefined>(
+    undefined
+  );
+  const [lastGedNotice, setLastGedNotice] = useState<string | null>(null);
+
+  // Hydratation des règles CMS de l'entité (Workflows, Commissions, GED)
+  useEffect(() => {
+    let active = true;
+    (async () => {
+      try {
+        const headers = await buildAuthenticatedJsonHeaders();
+        const res = await fetch(
+          `/api/admin/entity-studio?entityId=${encodeURIComponent(entityId)}`,
+          { headers }
+        );
+        if (!res.ok || !active) return;
+        const json = (await res.json()) as {
+          entities?: Array<{
+            id: string;
+            local_referentials?: {
+              workflowRules?: CmsWorkflowRule[];
+              commissionMembers?: CmsCommissionMember[];
+              gedPolicy?: CmsGedPolicyConfig;
+            };
+          }>;
+        };
+        const matched =
+          json.entities?.find((e) => e.id === entityId) ?? json.entities?.[0];
+        const lr = matched?.local_referentials;
+        if (lr && active) {
+          setCmsContext({
+            workflowRules: lr.workflowRules,
+            commissionMembers: lr.commissionMembers,
+            gedPolicy: lr.gedPolicy,
+          });
+        }
+      } catch {
+        // Fallback silencieux sur règles CMP standard
+      }
+    })();
+    return () => {
+      active = false;
+    };
+  }, [entityId]);
+
+  // Synchroniser paramètres sauvegardés si changement de projet chargé depuis Supabase
+  useEffect(() => {
+    if (!savedWorkflowState) return;
+    if (savedWorkflowState.fundingCategory)
+      setFundingCategory(savedWorkflowState.fundingCategory);
+    if (savedWorkflowState.urgencyMode) setUrgencyMode(savedWorkflowState.urgencyMode);
+    if (typeof savedWorkflowState.requiresLandSite === 'boolean')
+      setRequiresLandSite(savedWorkflowState.requiresLandSite);
+    if (typeof savedWorkflowState.requiresEnvironmentalNotice === 'boolean')
+      setRequiresEnvironmentalNotice(savedWorkflowState.requiresEnvironmentalNotice);
+    if (typeof savedWorkflowState.allotted === 'boolean')
+      setAllotted(savedWorkflowState.allotted);
+  }, [savedWorkflowState]);
 
   const procInput: MaturationProcedureInput = useMemo(
     () => ({
@@ -85,22 +182,47 @@ export function MaturationOrchestratorPanel({
     ]
   );
 
-  const roadmap = useMemo(() => buildMaturationProcedurePlan(procInput), [procInput]);
+  const roadmap = useMemo(
+    () => buildMaturationProcedurePlan(procInput, cmsContext),
+    [procInput, cmsContext]
+  );
 
   const storageKey = `sigamp_deliverables_${entityId}_${projectCode}`;
   const [deliverables, setDeliverables] = useState<ProcedureDeliverableItem[]>(
     roadmap.deliverables
   );
 
-  // Hydrate saved deliverable statuses if matching roadmap structure
+  // Hydratation : priorité aux données Supabase (`savedWorkflowState.deliverables`), sinon `localStorage`
   useEffect(() => {
+    const serverDeliverables = savedWorkflowState?.deliverables;
+    if (Array.isArray(serverDeliverables) && serverDeliverables.length > 0) {
+      const merged = roadmap.deliverables.map((baseItem) => {
+        const match = serverDeliverables.find(
+          (s) => s.deliverableCode === baseItem.deliverableCode
+        );
+        return match
+          ? {
+              ...baseItem,
+              status: match.status,
+              documentRef: match.documentRef,
+              updatedAtIso: match.updatedAtIso,
+              rejectionComment: match.rejectionComment,
+            }
+          : baseItem;
+      });
+      setDeliverables(merged);
+      return;
+    }
+
     try {
       const raw = window.localStorage.getItem(storageKey);
       if (raw) {
         const saved = JSON.parse(raw) as ProcedureDeliverableItem[];
         if (Array.isArray(saved) && saved.length > 0) {
           const merged = roadmap.deliverables.map((baseItem) => {
-            const match = saved.find((s) => s.deliverableCode === baseItem.deliverableCode);
+            const match = saved.find(
+              (s) => s.deliverableCode === baseItem.deliverableCode
+            );
             return match
               ? {
                   ...baseItem,
@@ -119,14 +241,45 @@ export function MaturationOrchestratorPanel({
       // Ignore storage error
     }
     setDeliverables(roadmap.deliverables);
-  }, [roadmap.deliverables, storageKey]);
+  }, [roadmap.deliverables, storageKey, savedWorkflowState?.deliverables]);
 
-  const persistDeliverables = (next: ProcedureDeliverableItem[]) => {
+  const persistDeliverables = async (
+    next: ProcedureDeliverableItem[],
+    archiveCandidate?: ProcedureDeliverableItem
+  ) => {
     setDeliverables(next);
     try {
       window.localStorage.setItem(storageKey, JSON.stringify(next));
     } catch {
       // Ignore quota errors
+    }
+
+    if (onSyncDeliverables) {
+      const res = await onSyncDeliverables(
+        {
+          orchestrator: {
+            fundingCategory,
+            urgencyMode,
+            requiresLandSite,
+            requiresEnvironmentalNotice,
+            allotted,
+            deliverables: next,
+          },
+        },
+        archiveCandidate
+          ? {
+              deliverableCode: archiveCandidate.deliverableCode,
+              deliverableTitle: archiveCandidate.deliverableTitle,
+              chronoNumber: archiveCandidate.documentRef,
+              responsibleRole: archiveCandidate.responsibleRole,
+            }
+          : undefined
+      );
+      if (archiveCandidate && res?.gedQrId) {
+        setLastGedNotice(
+          `Livrable ${archiveCandidate.deliverableCode} archivé et scellé dans la GED Régalienne (${res.gedQrId}).`
+        );
+      }
     }
   };
 
@@ -155,13 +308,13 @@ export function MaturationOrchestratorPanel({
             Entrées de Maturation &rarr; Démarche Réglementaire &rarr; Suivi du Statut des Livrables
           </h3>
           <p className="text-[11px] text-slate-500">
-            Calcule automatiquement les pièces requises, les organes de visa, la durée cible et pilote l’avancement de chaque livrable jusqu’à la réception.
+            Calcule automatiquement les pièces requises, les organes de visa, la durée cible et synchronise les livrables avec Supabase &amp; GED Régalienne.
           </p>
         </div>
 
         <button
           type="button"
-          onClick={() => persistDeliverables(roadmap.deliverables)}
+          onClick={() => void persistDeliverables(roadmap.deliverables)}
           className="inline-flex items-center gap-1.5 rounded-xl border border-slate-300 bg-slate-50 px-3 py-1.5 text-xs font-semibold text-[#0A1F3D] hover:bg-slate-100"
         >
           <RefreshCw className="h-3.5 w-3.5" />
@@ -289,8 +442,24 @@ export function MaturationOrchestratorPanel({
         </div>
       </div>
 
-      <div className="rounded-xl border border-slate-200 bg-slate-50 px-3.5 py-2 text-[11px] text-slate-700">
-        <strong>Fondement juridique détecté :</strong> {roadmap.legalBasisSummary}
+      <div className="space-y-1.5">
+        <div className="rounded-xl border border-slate-200 bg-slate-50 px-3.5 py-2 text-[11px] text-slate-700">
+          <strong>Fondement juridique détecté :</strong> {roadmap.legalBasisSummary}
+        </div>
+        {roadmap.appliedCmsSummary && (
+          <div className="flex items-center gap-1.5 rounded-xl border border-indigo-200 bg-indigo-50 px-3.5 py-2 text-[11px] text-indigo-900">
+            <Sparkles className="h-3.5 w-3.5 shrink-0 text-indigo-600" />
+            <span>
+              <strong>Règles CMS Entité branchées :</strong> {roadmap.appliedCmsSummary}
+            </span>
+          </div>
+        )}
+        {lastGedNotice && (
+          <div className="flex items-center gap-1.5 rounded-xl border border-emerald-300 bg-emerald-50 px-3.5 py-2 text-[11px] font-medium text-emerald-900">
+            <ShieldCheck className="h-3.5 w-3.5 shrink-0 text-emerald-700" />
+            <span>{lastGedNotice}</span>
+          </div>
+        )}
       </div>
 
       {/* 3. TABLEAU DE SUIVI DU STATUT DES LIVRABLES */}
@@ -374,7 +543,7 @@ export function MaturationOrchestratorPanel({
                     <input
                       value={item.documentRef ?? ''}
                       onChange={(e) =>
-                        persistDeliverables(
+                        void persistDeliverables(
                           updateDeliverableStatus(deliverables, item.id, {
                             documentRef: e.target.value,
                           })
@@ -392,13 +561,19 @@ export function MaturationOrchestratorPanel({
                   <td className="p-2.5">
                     <select
                       value={item.status}
-                      onChange={(e) =>
-                        persistDeliverables(
-                          updateDeliverableStatus(deliverables, item.id, {
-                            status: e.target.value as DeliverableStatus,
-                          })
-                        )
-                      }
+                      onChange={(e) => {
+                        const nextStatus = e.target.value as DeliverableStatus;
+                        const updatedList = updateDeliverableStatus(
+                          deliverables,
+                          item.id,
+                          { status: nextStatus }
+                        );
+                        const updatedItem =
+                          nextStatus === 'SIGNE_ARCHIVE_GED'
+                            ? updatedList.find((x) => x.id === item.id)
+                            : undefined;
+                        void persistDeliverables(updatedList, updatedItem);
+                      }}
                       className={`rounded-lg border px-2 py-1.5 text-[11px] font-bold ${
                         STATUS_BADGE[item.status]
                       }`}
@@ -420,7 +595,9 @@ export function MaturationOrchestratorPanel({
                       item.status === 'SIGNE_ARCHIVE_GED') && (
                       <div className="mt-1 flex items-center gap-1 text-[10px] font-semibold text-emerald-700">
                         <ShieldCheck className="h-3 w-3" />
-                        Livrable validé
+                        {item.status === 'SIGNE_ARCHIVE_GED'
+                          ? 'Scellé & archivé GED'
+                          : 'Livrable validé'}
                       </div>
                     )}
                     {item.status === 'A_PRODUIRE' && (

@@ -5,6 +5,11 @@ import type {
   ProcurementMode,
   ProcurementNature,
 } from '../../types/domain';
+import type {
+  CmsCommissionMember,
+  CmsGedPolicyConfig,
+  CmsWorkflowRule,
+} from './entityStudioEngine';
 import type { MaturationItemRecord } from './exceptionsEngine';
 import { routeProcurementProcedure } from './procurementRouter';
 
@@ -62,6 +67,12 @@ export interface ProcedureDeliverableItem {
   rejectionComment?: string;
 }
 
+export interface MaturationCmsContext {
+  workflowRules?: CmsWorkflowRule[];
+  commissionMembers?: CmsCommissionMember[];
+  gedPolicy?: CmsGedPolicyConfig;
+}
+
 export interface MaturationRoadmapResult {
   recommendedMode: ProcurementMode;
   contractType: ContractType;
@@ -71,6 +82,7 @@ export interface MaturationRoadmapResult {
   requiresTutelleVisa: boolean;
   estimatedTotalDurationDays: number;
   legalBasisSummary: string;
+  appliedCmsSummary?: string;
   adaptedMaturationPieces: MaturationItemRecord[];
   deliverables: ProcedureDeliverableItem[];
 }
@@ -156,7 +168,8 @@ export function generateAdaptedMaturationChecklist(
 }
 
 export function buildMaturationProcedurePlan(
-  input: MaturationProcedureInput
+  input: MaturationProcedureInput,
+  cmsContext?: MaturationCmsContext
 ): MaturationRoadmapResult {
   const safeAmount = Math.max(100_000, input.estimatedAmountTtc);
   const routing = routeProcurementProcedure({
@@ -440,6 +453,62 @@ export function buildMaturationProcedurePlan(
     blocking: false,
   });
 
+  // Application des règles CMS de l'entité (Workflows, Membres de Commission, Politique GED)
+  const cmsNotes: string[] = [];
+  if (cmsContext?.workflowRules?.length) {
+    const matchedRule = cmsContext.workflowRules.find(
+      (r) =>
+        r.active &&
+        (r.procedureLabel.toUpperCase().includes(effectiveMode) ||
+          (effectiveMode === 'DC_COTATION' && r.procedureLabel.toUpperCase().includes('COTATION')) ||
+          (isBca && r.procedureLabel.toUpperCase().includes('BON DE COMMANDE')))
+    );
+    if (matchedRule) {
+      cmsNotes.push(
+        `Règle CMS "${matchedRule.procedureLabel}" (${matchedRule.maxLegalDays}j max)`
+      );
+      if (!matchedRule.blockingControl) {
+        for (const d of deliverables) {
+          if (d.phase === 2) d.blocking = false;
+        }
+      }
+      // Ajuste le délai cible de publication/passation si la règle CMS définit un plafond plus court
+      const pubItem = deliverables.find((d) => d.deliverableCode === 'ACT-PUB-AAO');
+      if (pubItem && matchedRule.maxLegalDays > 0 && matchedRule.maxLegalDays < pubItem.targetDays) {
+        pubItem.targetDays = matchedRule.maxLegalDays;
+      }
+    }
+  }
+
+  if (cmsContext?.commissionMembers?.length && routing.primaryCommission) {
+    const activeMembers = cmsContext.commissionMembers.filter(
+      (m) => m.active && m.organ === routing.primaryCommission
+    );
+    const president = activeMembers.find((m) =>
+      m.roleInCommission.toUpperCase().includes('PRESIDENT') ||
+      m.roleInCommission.toUpperCase().includes('PRÉSIDENT')
+    );
+    if (activeMembers.length > 0) {
+      cmsNotes.push(
+        `${routing.primaryCommission} : ${activeMembers.length} membre(s) CMS actif(s)${
+          president ? ` (Prés. ${president.fullName})` : ''
+        }`
+      );
+      const examItem = deliverables.find((d) => d.deliverableCode === 'ACT-PV-EXAM-DAO');
+      if (examItem && president) {
+        examItem.deliverableTitle = `${examItem.deliverableTitle} — Prés. ${president.fullName}`;
+      }
+    }
+  }
+
+  if (cmsContext?.gedPolicy) {
+    cmsNotes.push(
+      `GED : rétention ${cmsContext.gedPolicy.retentionYears} ans${
+        cmsContext.gedPolicy.autoSealQr ? ' · scellé QR auto' : ''
+      }`
+    );
+  }
+
   const estimatedTotalDurationDays = deliverables.reduce(
     (sum, d) => sum + d.targetDays,
     0
@@ -454,6 +523,7 @@ export function buildMaturationProcedurePlan(
     requiresTutelleVisa: routing.requiresTutelleLegalityControl,
     estimatedTotalDurationDays,
     legalBasisSummary: extraLegalNote,
+    appliedCmsSummary: cmsNotes.length > 0 ? cmsNotes.join(' · ') : undefined,
     adaptedMaturationPieces,
     deliverables,
   };

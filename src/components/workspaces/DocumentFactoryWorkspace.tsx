@@ -14,7 +14,7 @@ import {
   Trash2,
   Upload,
 } from 'lucide-react';
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import {
   computeBpuDqeSummary,
   exportBpuToCsv,
@@ -112,6 +112,56 @@ export function DocumentFactoryWorkspace({ profile }: { profile: ActiveRoleProfi
   // Éditeur Structuré BPU / DQE (V3.1)
   const [bpuItems, setBpuItems] = useState<BpuDqeLineItem[]>(() => getPresetBpuLines('TRAVAUX'));
   const [blankBidderTables, setBlankBidderTables] = useState(false);
+
+  // Hydratation Gabarit Studio & Clauses CMS de l'entité
+  const [studioLayoutBadge, setStudioLayoutBadge] = useState<{
+    headerLayout: string;
+    cmsTemplatesCount: number;
+    hasLogo: boolean;
+  } | null>(null);
+
+  useEffect(() => {
+    let active = true;
+    (async () => {
+      try {
+        const headers = await buildAuthenticatedJsonHeaders();
+        const res = await fetch(
+          `/api/admin/entity-studio?entityId=${encodeURIComponent(profile.entityId)}`,
+          { headers }
+        );
+        if (!res.ok || !active) return;
+        const json = (await res.json()) as {
+          entities?: Array<{
+            id: string;
+            logo_url?: string | null;
+            studio_config?: { identityExtra?: { headerLayout?: string } };
+            local_referentials?: { actTemplates?: Array<{ enabled?: boolean }> };
+          }>;
+        };
+        const matched =
+          json.entities?.find((e) => e.id === profile.entityId) ?? json.entities?.[0];
+        if (matched && active) {
+          const layout =
+            matched.studio_config?.identityExtra?.headerLayout === 'CENTERED'
+              ? 'Centré'
+              : 'Bilingue FR/EN';
+          const tplCount = Array.isArray(matched.local_referentials?.actTemplates)
+            ? matched.local_referentials.actTemplates.filter((t) => t.enabled !== false).length
+            : 0;
+          setStudioLayoutBadge({
+            headerLayout: layout,
+            cmsTemplatesCount: tplCount,
+            hasLogo: Boolean(matched.logo_url),
+          });
+        }
+      } catch {
+        // Fallback silencieux
+      }
+    })();
+    return () => {
+      active = false;
+    };
+  }, [profile.entityId]);
 
   const bpuSummary = useMemo(
     () => computeBpuDqeSummary(bpuItems, { fiscalRegime }),
@@ -385,6 +435,15 @@ export function DocumentFactoryWorkspace({ profile }: { profile: ActiveRoleProfi
             Production fidèle aux modèles officiels ARMP/MINMAP (1 141 pages officielles indexées) avec
             export <strong>PDF scellé</strong> & <strong>Word (.docx) modifiable</strong>.
           </p>
+          {studioLayoutBadge && (
+            <div className="mt-2 inline-flex flex-wrap items-center gap-2 rounded-lg border border-emerald-200 bg-emerald-50 px-2.5 py-1 text-[11px] font-medium text-emerald-900">
+              <span>
+                Gabarit Studio injecté : <strong>En-tête {studioLayoutBadge.headerLayout}</strong>
+              </span>
+              <span>· {studioLayoutBadge.hasLogo ? 'Logo entité actif' : 'Sans logo image'}</span>
+              <span>· {studioLayoutBadge.cmsTemplatesCount} modèle(s) CMS liés</span>
+            </div>
+          )}
         </div>
 
         <div className="flex flex-wrap gap-1.5 rounded-xl bg-slate-100 p-1">

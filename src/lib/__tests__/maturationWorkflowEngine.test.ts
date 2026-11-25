@@ -133,4 +133,61 @@ describe('Moteur Orchestration Maturation -> Démarche -> Livrables', () => {
     expect(readyMetrics.blockingPendingCount).toBe(0);
     expect(readyMetrics.progressPercent).toBeGreaterThan(0);
   });
+
+  it('injecte les règles CMS d’entité (Workflows, Membres de Commission, GED) dans la feuille de route', () => {
+    const plan = buildMaturationProcedurePlan(
+      {
+        projectCode: 'BAF-2026-CMS',
+        projectTitle: 'Extension réseau éclairage public',
+        entityType: 'COMMUNE',
+        nature: 'TRAVAUX',
+        estimatedAmountTtc: 95_000_000,
+        fundingCategory: 'BUDGET_PROPRE',
+        urgencyMode: 'NORMALE',
+        requiresLandSite: true,
+        requiresEnvironmentalNotice: false,
+        allotted: false,
+      },
+      {
+        workflowRules: [
+          {
+            id: 'wf-aono',
+            procedureLabel: 'AONO Travaux >= 50M',
+            thresholdRange: '>= 50 000 000 FCFA',
+            steps: ['Maturation', 'DAO', 'Commission'],
+            maxLegalDays: 25,
+            blockingControl: true,
+            active: true,
+          },
+        ],
+        commissionMembers: [
+          {
+            id: 'cm-1',
+            fullName: 'M. Jean-Paul Njoya',
+            roleInCommission: 'Président CDPM',
+            organ: 'CDPM',
+            appointmentRef: 'ARR-2026-01',
+            indemnityFcfa: 75_000,
+            active: true,
+          },
+        ],
+        gedPolicy: {
+          retentionYears: 10,
+          autoSealQr: true,
+          requireDigitalSignature: true,
+          watermarkDrafts: true,
+          allowPublicAvisPortal: true,
+          webhookUrl: '',
+        },
+      }
+    );
+
+    expect(plan.appliedCmsSummary).toContain('AONO Travaux >= 50M');
+    expect(plan.appliedCmsSummary).toContain('Jean-Paul Njoya');
+    expect(plan.appliedCmsSummary).toContain('rétention 10 ans');
+    const pubItem = plan.deliverables.find((d) => d.deliverableCode === 'ACT-PUB-AAO');
+    expect(pubItem?.targetDays).toBe(25);
+    const examItem = plan.deliverables.find((d) => d.deliverableCode === 'ACT-PV-EXAM-DAO');
+    expect(examItem?.deliverableTitle).toContain('Jean-Paul Njoya');
+  });
 });

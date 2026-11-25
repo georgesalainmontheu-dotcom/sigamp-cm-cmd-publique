@@ -17,6 +17,10 @@ import {
   buildMultiPageOfficialPdf,
   buildOfficialDocxBuffer,
 } from '../../../../lib/pdf/officeAndPdfExporter';
+import type {
+  CmsActTemplateOverride,
+  EntityVisualIdentity,
+} from '../../../../lib/domain/entityStudioEngine';
 import { resolveGedFolderForAct } from '../../../../lib/domain/gedArchiveEngine';
 import type { FiscalRegime } from '../../../../types/domain';
 
@@ -79,8 +83,83 @@ export async function POST(req: Request): Promise<Response> {
     const body = (await req.json()) as GenerateRequestBody;
     const admin = getServiceSupabase();
 
+    // Hydratation du gabarit Studio (en-tête bilingue/centré, logo, pied de page) & clauses CMS de l'entité
+    let studioIdentity: Partial<EntityVisualIdentity> | undefined;
+    let actTemplates: CmsActTemplateOverride[] = [];
+    if (admin && body.entityId) {
+      const { data: entityRow } = await admin
+        .from('entities')
+        .select(
+          'id, code, name, type, municipality, region, department, tutelle_authority, niu, address, phone, email, logo_url, primary_color, accent_color, header_timbre_text, footer_legal_text, studio_config, local_referentials'
+        )
+        .eq('id', body.entityId)
+        .maybeSingle();
+
+      if (entityRow) {
+        const sc = (entityRow.studio_config as { identityExtra?: Partial<EntityVisualIdentity> } | null) ?? {};
+        const extra = sc.identityExtra ?? {};
+        const lr = (entityRow.local_referentials as { actTemplates?: CmsActTemplateOverride[] } | null) ?? {};
+        if (Array.isArray(lr.actTemplates)) {
+          actTemplates = lr.actTemplates;
+        }
+        studioIdentity = {
+          entityId: entityRow.id,
+          entityCode: entityRow.code,
+          entityName: entityRow.name,
+          entityType: entityRow.type,
+          municipality: entityRow.municipality ?? '',
+          primaryColor: entityRow.primary_color ?? '#0A1F3D',
+          accentColor: entityRow.accent_color ?? '#D4AF37',
+          logoUrl: entityRow.logo_url ?? undefined,
+          headerTimbreText: entityRow.header_timbre_text ?? undefined,
+          footerLegalText: entityRow.footer_legal_text ?? undefined,
+          tutelleFr: entityRow.tutelle_authority ?? undefined,
+          regionDeptLineFr: [entityRow.region, entityRow.department].filter(Boolean).join(' / ') || undefined,
+          taxRegistrationNumber: entityRow.niu ?? undefined,
+          footerPhysicalAddress: entityRow.address ?? undefined,
+          footerPhone: entityRow.phone ?? undefined,
+          footerEmail: entityRow.email ?? undefined,
+          ...extra,
+        };
+      }
+    }
+
     if (body.mode === 'PARAMETRIC_ACT') {
       const rendered = renderParametricAct(body.actCode, body.context);
+      const cmsOverride = actTemplates.find(
+        (t) => t.actCode === body.actCode && t.enabled
+      );
+      const effectiveSections = [
+        {
+          heading: 'IDENTIFICATION & TUTELLE COMPETENTE',
+          body: `Commission compétente : ${rendered.commissionCompetente}\n${rendered.tutelleVisaNote}\nRéférence réglementaire : ${rendered.act.legalBasis}\nRégime fiscal applicable : ${rendered.fiscalNote}`,
+        },
+        ...(cmsOverride?.customVisas?.trim()
+          ? [
+              {
+                heading: 'VISAS SPECIFIQUES ENTITE (CMS)',
+                body: cmsOverride.customVisas.trim(),
+              },
+            ]
+          : []),
+        {
+          heading: 'DISPOSITIONS REGLEMENTAIRES VERROUILLEES (ORDRE PUBLIC)',
+          body: rendered.lockedSection,
+        },
+        {
+          heading: 'DISPOSITIF CONTEXTUEL ADAPTE',
+          body: rendered.adaptableSection,
+        },
+        ...(cmsOverride?.customClauses?.trim()
+          ? [
+              {
+                heading: 'CLAUSES PARTICULIERES ENTITE (CMS)',
+                body: cmsOverride.customClauses.trim(),
+              },
+            ]
+          : []),
+      ];
+
       const docInput = {
         documentCategory: rendered.act.actCode,
         documentNumber: body.context.chronoNumber,
@@ -93,22 +172,10 @@ export async function POST(req: Request): Promise<Response> {
         signatoryName: body.context.signerName,
         actorUserId: guard.userId,
         actorRole: rendered.act.roleOwner,
-        primaryColorHex: body.primaryColorHex,
-        accentColorHex: body.accentColorHex,
-        sections: [
-          {
-            heading: 'IDENTIFICATION & TUTELLE COMPETENTE',
-            body: `Commission compétente : ${rendered.commissionCompetente}\n${rendered.tutelleVisaNote}\nRéférence réglementaire : ${rendered.act.legalBasis}\nRégime fiscal applicable : ${rendered.fiscalNote}`,
-          },
-          {
-            heading: 'DISPOSITIONS REGLEMENTAIRES VERROUILLEES (ORDRE PUBLIC)',
-            body: rendered.lockedSection,
-          },
-          {
-            heading: 'DISPOSITIF CONTEXTUEL ADAPTE',
-            body: rendered.adaptableSection,
-          },
-        ],
+        primaryColorHex: body.primaryColorHex ?? studioIdentity?.primaryColor,
+        accentColorHex: body.accentColorHex ?? studioIdentity?.accentColor,
+        studioIdentity,
+        sections: effectiveSections,
         ampliations: rendered.ampliations,
       };
 
@@ -214,8 +281,9 @@ export async function POST(req: Request): Promise<Response> {
         signatoryName: body.dtaoInput.entityName,
         actorUserId: guard.userId,
         actorRole: 'SIGAMP' as const,
-        primaryColorHex: body.primaryColorHex,
-        accentColorHex: body.accentColorHex,
+        primaryColorHex: body.primaryColorHex ?? studioIdentity?.primaryColor,
+        accentColorHex: body.accentColorHex ?? studioIdentity?.accentColor,
+        studioIdentity,
         sections,
         tables,
       };
@@ -293,8 +361,9 @@ export async function POST(req: Request): Promise<Response> {
         signatoryName: body.entityName,
         actorUserId: guard.userId,
         actorRole: 'SIGAMP' as const,
-        primaryColorHex: body.primaryColorHex,
-        accentColorHex: body.accentColorHex,
+        primaryColorHex: body.primaryColorHex ?? studioIdentity?.primaryColor,
+        accentColorHex: body.accentColorHex ?? studioIdentity?.accentColor,
+        studioIdentity,
         sections: [
           {
             heading: 'SYNTHESE FINANCIERE & FISCALITE CGI EN VIGUEUR',

@@ -21,7 +21,7 @@ import {
   Unlock,
   UserCheck,
 } from 'lucide-react';
-import { useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   calculateAdjustedCompletionDate,
   calculateDecompte,
@@ -71,9 +71,28 @@ import {
   DEFAULT_DEMO_SCALES,
   type ActiveRoleProfile,
 } from '../../lib/ui/demoProfiles';
+import { buildAuthenticatedJsonHeaders } from '../../lib/supabase/client';
 import type { FiscalRegime, ProcurementNature } from '../../types/domain';
 import { PdfPreviewModal } from '../pdf/PdfPreviewModal';
-import { MaturationOrchestratorPanel } from './MaturationOrchestratorPanel';
+import {
+  MaturationOrchestratorPanel,
+  type SavedOrchestratorState,
+} from './MaturationOrchestratorPanel';
+
+interface DbProjectSummary {
+  id: string;
+  reference_code: string;
+  title: string;
+  nature: ProcurementNature;
+  estimated_amount_ttc: number;
+  current_stage: number;
+  funding_source?: string | null;
+  maturation_docs?: MaturationItemRecord[] | null;
+  workflow_state?: {
+    orchestrator?: SavedOrchestratorState;
+    stages?: Record<string, unknown>;
+  } | null;
+}
 
 const STAGE_DEFS = [
   { id: 1, short: '1. Maturation', title: 'Maturation & Géolocalisation (Circ. 001/CAB/PM)' },
@@ -246,6 +265,13 @@ export function ValueChainWorkspace({ profile }: { profile: ActiveRoleProfile })
   const [maturationItems, setMaturationItems] = useState<MaturationItemRecord[]>(
     INITIAL_MATURATION_ITEMS
   );
+  const [dbProjects, setDbProjects] = useState<DbProjectSummary[]>([]);
+  const [activeProjectId, setActiveProjectId] = useState<string | null>(null);
+  const [savedOrchestratorState, setSavedOrchestratorState] = useState<
+    SavedOrchestratorState | undefined
+  >(undefined);
+  const [syncBadge, setSyncBadge] = useState<string>('Chargement Supabase...');
+  const [savingProject, setSavingProject] = useState(false);
 
   // --- ÉTAPE 2 : INGÉNIEUR, SAISINE, CCTP & DEVIS CONFIDENTIEL ---
   const [selectedAdvisorId, setSelectedAdvisorId] = useState<string>('tech-001');
@@ -707,6 +733,161 @@ export function ValueChainWorkspace({ profile }: { profile: ActiveRoleProfile })
     setPdfResult(pdf);
   };
 
+  const applyLoadedProject = useCallback((p: DbProjectSummary) => {
+    setActiveProjectId(p.id);
+    setProjectCode(p.reference_code);
+    setProjectTitle(p.title);
+    if (p.nature) setNature(p.nature);
+    if (p.estimated_amount_ttc) setEstimatedAmountTtc(Number(p.estimated_amount_ttc));
+    if (p.funding_source) setFundingSource(p.funding_source);
+    if (typeof p.current_stage === 'number' && p.current_stage >= 1 && p.current_stage <= 7) {
+      setCurrentStage(p.current_stage);
+    }
+    if (Array.isArray(p.maturation_docs) && p.maturation_docs.length > 0) {
+      setMaturationItems(p.maturation_docs);
+    }
+    if (p.workflow_state?.orchestrator) {
+      setSavedOrchestratorState(p.workflow_state.orchestrator);
+    } else {
+      setSavedOrchestratorState(undefined);
+    }
+  }, []);
+
+  // Chargement des dossiers persistés dans Supabase pour l'entité active
+  useEffect(() => {
+    let active = true;
+    (async () => {
+      try {
+        const headers = await buildAuthenticatedJsonHeaders();
+        const res = await fetch(
+          `/api/projects?entityId=${encodeURIComponent(profile.entityId)}`,
+          { headers }
+        );
+        if (!res.ok || !active) {
+          setSyncBadge('Mode local (hors-ligne)');
+          return;
+        }
+        const json = (await res.json()) as { projects?: DbProjectSummary[] };
+        const rows = json.projects ?? [];
+        if (active) {
+          setDbProjects(rows);
+          if (rows.length > 0) {
+            applyLoadedProject(rows[0]!);
+            setSyncBadge(`Synchronisé Supabase (${rows.length} dossier(s))`);
+          } else {
+            setSyncBadge('Prêt · Nouveau dossier');
+          }
+        }
+      } catch {
+        if (active) setSyncBadge('Mode local (hors-ligne)');
+      }
+    })();
+    return () => {
+      active = false;
+    };
+  }, [profile.entityId, applyLoadedProject]);
+
+  const syncProjectToSupabase = useCallback(
+    async (
+      extraWorkflowState?: { orchestrator?: SavedOrchestratorState },
+      archiveDeliverableInGed?: {
+        deliverableCode: string;
+        deliverableTitle: string;
+        chronoNumber?: string;
+        responsibleRole?: string;
+      }
+    ): Promise<{ gedQrId?: string | null } | void> => {
+      setSavingProject(true);
+      try {
+        const headers = await buildAuthenticatedJsonHeaders();
+        const res = await fetch('/api/projects', {
+          method: 'PATCH',
+          headers,
+          body: JSON.stringify({
+            entityId: profile.entityId,
+            projectId: activeProjectId ?? undefined,
+            referenceCode: projectCode,
+            title: projectTitle,
+            nature,
+            mode: routing.recommendedMode,
+            fiscalYear: profile.fiscalYear,
+            estimatedAmountTtc,
+            currentStage,
+            fundingSource,
+            maturationValidated: maturationReadiness.canAdvanceToTechnicalAssignment,
+            maturationDocs: maturationItems,
+            workflowState: {
+              ...(extraWorkflowState ?? {}),
+              stages: {
+                region,
+                department,
+                arrondissement,
+                gpsCoords,
+                budgetImputation,
+                executionDays,
+                selectedAdvisorId,
+                saisineChrono,
+                cctpTitle,
+                fiscalRegime,
+              },
+            },
+            archiveDeliverableInGed,
+          }),
+        });
+        if (!res.ok) {
+          setSyncBadge('Erreur sync Supabase (sauvé localement)');
+          return;
+        }
+        const json = (await res.json()) as {
+          project?: DbProjectSummary;
+          gedArchivedDocument?: { qr_verification_id?: string | null } | null;
+        };
+        if (json.project) {
+          setActiveProjectId(json.project.id);
+          setDbProjects((prev) => {
+            const idx = prev.findIndex((x) => x.id === json.project!.id);
+            if (idx >= 0) {
+              const next = [...prev];
+              next[idx] = json.project!;
+              return next;
+            }
+            return [json.project!, ...prev];
+          });
+          setSyncBadge(`Sauvegardé Supabase (${json.project.reference_code})`);
+        }
+        return { gedQrId: json.gedArchivedDocument?.qr_verification_id ?? null };
+      } catch {
+        setSyncBadge('Hors-ligne (sauvé localement)');
+      } finally {
+        setSavingProject(false);
+      }
+    },
+    [
+      profile.entityId,
+      profile.fiscalYear,
+      activeProjectId,
+      projectCode,
+      projectTitle,
+      nature,
+      routing.recommendedMode,
+      estimatedAmountTtc,
+      currentStage,
+      fundingSource,
+      maturationReadiness.canAdvanceToTechnicalAssignment,
+      maturationItems,
+      region,
+      department,
+      arrondissement,
+      gpsCoords,
+      budgetImputation,
+      executionDays,
+      selectedAdvisorId,
+      saisineChrono,
+      cctpTitle,
+      fiscalRegime,
+    ]
+  );
+
   const updateMaturationStatus = (pieceType: MaturationItemRecord['pieceType'], status: MaturationItemStatus) => {
     setMaturationItems((prev) =>
       prev.map((item) => (item.pieceType === pieceType ? { ...item, status } : item))
@@ -737,14 +918,45 @@ export function ValueChainWorkspace({ profile }: { profile: ActiveRoleProfile })
               <strong>{assembledDao.completionMetrics.overallReadinessPct}% prêt</strong>
             </p>
           </div>
-          <button
-            type="button"
-            onClick={() => setRagOpen((v) => !v)}
-            className="inline-flex items-center gap-2 rounded-xl border border-gov-gold/50 bg-gov-gold/15 px-3.5 py-2 text-xs font-semibold text-gov-gold transition hover:bg-gov-gold/25"
-          >
-            <BookOpen className="h-4 w-4" />
-            {ragOpen ? 'Masquer Corpus Juridique RAG' : 'Corpus Juridique Camerounais (28 textes)'}
-          </button>
+          <div className="flex flex-wrap items-center gap-2">
+            {dbProjects.length > 0 && (
+              <select
+                value={activeProjectId ?? ''}
+                onChange={(e) => {
+                  const chosen = dbProjects.find((x) => x.id === e.target.value);
+                  if (chosen) applyLoadedProject(chosen);
+                }}
+                aria-label="Dossier Supabase actif"
+                className="rounded-xl border border-white/25 bg-white/10 px-3 py-2 text-xs font-semibold text-white"
+              >
+                {dbProjects.map((p) => (
+                  <option key={p.id} value={p.id} className="text-slate-900">
+                    {p.reference_code} — {p.title.slice(0, 42)}
+                  </option>
+                ))}
+              </select>
+            )}
+            <button
+              type="button"
+              disabled={savingProject}
+              onClick={() => void syncProjectToSupabase()}
+              className="inline-flex items-center gap-1.5 rounded-xl bg-emerald-500 px-3.5 py-2 text-xs font-bold text-slate-950 transition hover:bg-emerald-400 disabled:opacity-60"
+            >
+              <CheckCircle2 className="h-3.5 w-3.5" />
+              {savingProject ? 'Synchro...' : 'Sauvegarder Dossier Supabase'}
+            </button>
+            <button
+              type="button"
+              onClick={() => setRagOpen((v) => !v)}
+              className="inline-flex items-center gap-2 rounded-xl border border-gov-gold/50 bg-gov-gold/15 px-3.5 py-2 text-xs font-semibold text-gov-gold transition hover:bg-gov-gold/25"
+            >
+              <BookOpen className="h-4 w-4" />
+              {ragOpen ? 'Masquer Corpus Juridique RAG' : 'Corpus Juridique Camerounais (28 textes)'}
+            </button>
+          </div>
+        </div>
+        <div className="mt-2 text-[11px] text-emerald-300/90">
+          État Base PostgreSQL : <strong>{syncBadge}</strong>
         </div>
 
         {/* Stepper 7 Étapes Verrouillées */}
@@ -1029,6 +1241,8 @@ export function ValueChainWorkspace({ profile }: { profile: ActiveRoleProfile })
               projectTitle={projectTitle}
               nature={nature}
               estimatedAmountTtc={estimatedAmountTtc}
+              savedWorkflowState={savedOrchestratorState}
+              onSyncDeliverables={syncProjectToSupabase}
             />
           </div>
         </div>
