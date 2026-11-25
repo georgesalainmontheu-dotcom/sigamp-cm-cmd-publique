@@ -7,6 +7,7 @@ import {
   FileSignature,
   FileText,
   FolderPlus,
+  Layers,
   Mail,
   Printer,
   Scale,
@@ -48,6 +49,7 @@ import {
 import type { CorrespondenceCaseType } from '../../types/ai';
 import type { ProcurementNature } from '../../types/domain';
 import { PdfPreviewModal } from '../pdf/PdfPreviewModal';
+import { ValueChainWorkspace } from './ValueChainWorkspace';
 
 interface ProjectItem {
   id: string;
@@ -63,8 +65,8 @@ interface ProjectItem {
 
 export function SigampMoWorkspace({ profile }: { profile: ActiveRoleProfile }) {
   const [activeTab, setActiveTab] = useState<
-    'PROJECTS' | 'DAO_TIMELINE' | 'AVENANTS_MED' | 'CORRESPONDENCE' | 'INDEMNITIES'
-  >('PROJECTS');
+    'VALUE_CHAIN' | 'PROJECTS' | 'DAO_TIMELINE' | 'AVENANTS_MED' | 'CORRESPONDENCE' | 'INDEMNITIES'
+  >('VALUE_CHAIN');
 
   // 1. Journal & Création Projet
   const [projects, setProjects] = useState<ProjectItem[]>([
@@ -509,6 +511,7 @@ export function SigampMoWorkspace({ profile }: { profile: ActiveRoleProfile }) {
       {/* Navigation interne SIGAMP / MO */}
       <div className="flex flex-wrap gap-2">
         {[
+          { id: 'VALUE_CHAIN', label: 'Chaîne de Valeur Intégrale (7 Étapes)', icon: Layers },
           { id: 'PROJECTS', label: 'Journal des Projets & Routage CMP', icon: FolderPlus },
           { id: 'DAO_TIMELINE', label: 'Montage DAO & Délais / Additifs', icon: CalendarClock },
           { id: 'AVENANTS_MED', label: 'Avenants (30%) & Mise en Demeure', icon: AlertOctagon },
@@ -540,6 +543,9 @@ export function SigampMoWorkspace({ profile }: { profile: ActiveRoleProfile }) {
           {offlineNotice}
         </div>
       )}
+
+      {/* TAB 0 : CHAÎNE DE VALEUR INTÉGRALE V2.0 */}
+      {activeTab === 'VALUE_CHAIN' && <ValueChainWorkspace profile={profile} />}
 
       {/* TAB 1 : PROJETS & ROUTAGE CMP */}
       {activeTab === 'PROJECTS' && (

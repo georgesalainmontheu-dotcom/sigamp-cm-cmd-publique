@@ -36,9 +36,10 @@ import {
   evaluateAddendumExtension,
   routeProcurementProcedure,
 } from '../domain/procurementRouter';
+import { searchLocalLegalCorpus } from '../legal/cameroonLegalCorpus';
 import { invokeAiGateway, type GatewayRuntimeOptions } from './aiGateway';
 import { generateAdministrativeCorrespondence } from './correspondenceGenerator';
-import { NLP_COPILOT_SYSTEM_PROMPT } from './legalPrompts';
+import { formatLegalRagContext, NLP_COPILOT_SYSTEM_PROMPT } from './legalPrompts';
 
 /**
  * Moteur 2 (Jalon 3) : Agentic Workflow & Function Calling
@@ -356,6 +357,25 @@ export const AI_TOOL_DEFINITIONS: AiToolDefinition[] = [
         },
       },
       required: ['notifiedAtIso', 'gracePeriodDays', 'remediedBySupplier'],
+    },
+  },
+  {
+    name: 'search_cameroon_legal_corpus',
+    description:
+      'Recherche dans le corpus juridique complet de la commande publique camerounaise (Décret 2018/366 CMP, Décret 2013/271, CGCTD 2019/024, CGI/MINFI, Circulaire 001/CAB/PM Maturation, OHADA Sûretés, Circulaire ARMP).',
+    parameters: {
+      type: 'object',
+      properties: {
+        query: {
+          type: 'string',
+          description: 'Mots-clés ou question juridique (ex: maturation, oab, reception definitive, 30%, caution ohada).',
+        },
+        domainTag: {
+          type: 'string',
+          description: 'Tag domaine optionnel (ex: MATURATION, FISCALITE_DECOMPTES, RECEPTIONS_GARANTIES).',
+        },
+      },
+      required: ['query'],
     },
   },
 ];
@@ -706,6 +726,24 @@ export async function executeAiToolCall(
         };
       }
 
+      case 'search_cameroon_legal_corpus': {
+        const query = asRequiredString(args, 'query');
+        const domainTag =
+          typeof args.domainTag === 'string' && args.domainTag.trim()
+            ? args.domainTag.trim()
+            : undefined;
+        const matches = searchLocalLegalCorpus(query, { domainTag, limit: 4 });
+
+        return {
+          toolName: toolCall.name,
+          success: true,
+          data: { query, matches },
+          auditSummary: `Corpus juridique camerounais : ${matches.length} texte(s) pertinent(s) trouvé(s) (${matches
+            .map((m) => `${m.sourceCode} ${m.articleRef}`)
+            .join(', ')}).`,
+        };
+      }
+
       default:
         return {
           toolName: toolCall.name,
@@ -734,8 +772,10 @@ export async function runAgenticWorkflow(params: {
   gatewayRuntime?: GatewayRuntimeOptions;
 }): Promise<AgenticWorkflowResult> {
   const maxIterations = params.maxIterations ?? 4;
+  const ragMatches = searchLocalLegalCorpus(params.userPrompt, { limit: 3 });
+  const systemPromptWithRag = `${NLP_COPILOT_SYSTEM_PROMPT}${formatLegalRagContext(ragMatches)}`;
   const messages: AiChatMessage[] = [
-    { role: 'system', content: NLP_COPILOT_SYSTEM_PROMPT },
+    { role: 'system', content: systemPromptWithRag },
     ...(params.history ?? []),
     { role: 'user', content: params.userPrompt },
   ];

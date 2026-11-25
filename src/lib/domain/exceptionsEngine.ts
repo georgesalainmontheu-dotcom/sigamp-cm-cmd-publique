@@ -344,3 +344,272 @@ export function evaluateSecuritiesExpiry(
     ),
   };
 }
+
+// ============================================================================
+// MATURATION DETAILLÉE (CIRCULAIRE N° 001/CAB/PM & DIRECTIVES MINEPAT)
+// ============================================================================
+
+export type MaturationPieceType =
+  | 'APS_APD'
+  | 'TDR'
+  | 'DISPONIBILITE_SITE'
+  | 'MERCURIALE_ESTIMATION'
+  | 'EIES_NOTICE';
+
+export type MaturationItemStatus =
+  | 'MANQUANT'
+  | 'EN_COURS'
+  | 'VALIDE'
+  | 'DISPENSE_JUSTIFIEE';
+
+export interface MaturationItemRecord {
+  pieceType: MaturationPieceType;
+  label: string;
+  mandatory: boolean;
+  status: MaturationItemStatus;
+  documentRef?: string;
+  dispensationReason?: string;
+  validatedBy?: string;
+  validatedAtIso?: string;
+}
+
+export interface MaturationReadinessResult {
+  canAdvanceToTechnicalAssignment: boolean;
+  validatedCount: number;
+  mandatoryCount: number;
+  completionPct: number;
+  blockingItems: string[];
+  legalNote: string;
+}
+
+export function evaluateMaturationReadiness(
+  items: MaturationItemRecord[]
+): MaturationReadinessResult {
+  const mandatoryItems = items.filter((i) => i.mandatory);
+  const blockingItems: string[] = [];
+  let okCount = 0;
+
+  for (const item of mandatoryItems) {
+    if (item.status === 'VALIDE') {
+      okCount += 1;
+    } else if (item.status === 'DISPENSE_JUSTIFIEE') {
+      if (item.dispensationReason && item.dispensationReason.trim().length >= 10) {
+        okCount += 1;
+      } else {
+        blockingItems.push(
+          `${item.label} : dispense déclarée sans motif juridique documenté (>= 10 caractères).`
+        );
+      }
+    } else {
+      blockingItems.push(`${item.label} (${item.status})`);
+    }
+  }
+
+  const totalCount = mandatoryItems.length || 1;
+  const completionPct = Math.round((okCount / totalCount) * 100);
+
+  return {
+    canAdvanceToTechnicalAssignment: blockingItems.length === 0 && mandatoryItems.length > 0,
+    validatedCount: okCount,
+    mandatoryCount: mandatoryItems.length,
+    completionPct,
+    blockingItems,
+    legalNote:
+      'Circulaire n° 001/CAB/PM : aucune passation ne peut être lancée sans dossier complet de maturation (études, foncier/site, mercuriale, EIES).',
+  };
+}
+
+// ============================================================================
+// DETECTION OFFRE ANORMALEMENT BASSE (OAB - ART. 96-104 CMP & DEVIS CONFIDENTIEL)
+// ============================================================================
+
+export interface OabDetectionInput {
+  confidentialEstimateTtc: number;
+  technicallyQualifiedBidsTtc: Array<{
+    bidId: string;
+    supplierName: string;
+    amountTtc: number;
+  }>;
+  thresholdDropRatio?: number; // Défaut 0.15 (-15%)
+}
+
+export interface OabBidResult {
+  bidId: string;
+  supplierName: string;
+  amountTtc: number;
+  deviationFromReferencePct: number;
+  isAbnormallyLow: boolean;
+  requiresPriceSubDetailsRequest: boolean;
+}
+
+export interface OabDetectionSummary {
+  confidentialEstimateTtc: number;
+  bidsAverageTtc: number;
+  weightedReferenceTtc: number; // 40% Devis Confidentiel + 60% Moyenne Offres Conformes
+  oabCutoffTtc: number;
+  results: OabBidResult[];
+}
+
+export function detectAbnormallyLowBid(input: OabDetectionInput): OabDetectionSummary {
+  const dropRatio = input.thresholdDropRatio ?? 0.15;
+  const bids = input.technicallyQualifiedBidsTtc;
+  const bidsAverageTtc =
+    bids.length > 0
+      ? roundFcfa(bids.reduce((acc, b) => acc + b.amountTtc, 0) / bids.length)
+      : input.confidentialEstimateTtc;
+
+  const weightedReferenceTtc = roundFcfa(
+    0.4 * input.confidentialEstimateTtc + 0.6 * bidsAverageTtc
+  );
+  const oabCutoffTtc = roundFcfa(weightedReferenceTtc * (1 - dropRatio));
+
+  const results: OabBidResult[] = bids.map((b) => {
+    const deviationPct =
+      weightedReferenceTtc > 0
+        ? Number((((b.amountTtc - weightedReferenceTtc) / weightedReferenceTtc) * 100).toFixed(2))
+        : 0;
+    const isAbnormallyLow = b.amountTtc < oabCutoffTtc;
+    return {
+      bidId: b.bidId,
+      supplierName: b.supplierName,
+      amountTtc: roundFcfa(b.amountTtc),
+      deviationFromReferencePct: deviationPct,
+      isAbnormallyLow,
+      requiresPriceSubDetailsRequest: isAbnormallyLow,
+    };
+  });
+
+  return {
+    confidentialEstimateTtc: roundFcfa(input.confidentialEstimateTtc),
+    bidsAverageTtc,
+    weightedReferenceTtc,
+    oabCutoffTtc,
+    results,
+  };
+}
+
+// ============================================================================
+// RECEPTIONS PROVISOIRE & DEFINITIVE, RESERVES & MAINLEVEE (ART. 155-164 CMP)
+// ============================================================================
+
+export interface ProvisionalReceptionInput {
+  receptionDateIso: string;
+  warrantyDurationMonths: number; // 6 à 12 mois selon CCAP
+  hasReserves: boolean;
+  reservesList: string[];
+  reservesLiftDeadlineIso?: string;
+  reservesLiftedAtIso?: string | null;
+  attendanceSignedCount: number;
+  quorumRequiredCount: number;
+}
+
+export interface ProvisionalReceptionEvaluation {
+  canSignProvisionalPv: boolean;
+  provisionalDecision: 'PRONONCEE_SANS_RESERVE' | 'PRONONCEE_AVEC_RESERVES' | 'AJOURNEE_QUORUM';
+  warrantyEndDateIso: string;
+  canReleasePerformanceBond: boolean;
+  blockingReasons: string[];
+}
+
+export function evaluateProvisionalReception(
+  input: ProvisionalReceptionInput
+): ProvisionalReceptionEvaluation {
+  const blockingReasons: string[] = [];
+  if (input.attendanceSignedCount < input.quorumRequiredCount) {
+    blockingReasons.push(
+      `Quorum de la commission de réception non atteint (${input.attendanceSignedCount}/${input.quorumRequiredCount} membres émargés).`
+    );
+  }
+  if (input.hasReserves && input.reservesList.length === 0) {
+    blockingReasons.push('Réserves cochées mais liste des réserves techniques vide.');
+  }
+  if (input.hasReserves && !input.reservesLiftDeadlineIso) {
+    blockingReasons.push('Délai impératif de levée des réserves manquant.');
+  }
+
+  const baseDate = new Date(input.receptionDateIso);
+  const warrantyEnd = new Date(baseDate.getTime());
+  warrantyEnd.setUTCMonth(warrantyEnd.getUTCMonth() + input.warrantyDurationMonths);
+
+  const reservesRemaining = input.hasReserves && !input.reservesLiftedAtIso;
+  if (reservesRemaining) {
+    blockingReasons.push(
+      'Mainlevée du cautionnement de bonne exécution bloquée jusqu’à constatation écrite de la levée des réserves.'
+    );
+  }
+
+  const quorumOk = input.attendanceSignedCount >= input.quorumRequiredCount;
+  const provisionalDecision = !quorumOk
+    ? 'AJOURNEE_QUORUM'
+    : input.hasReserves
+      ? 'PRONONCEE_AVEC_RESERVES'
+      : 'PRONONCEE_SANS_RESERVE';
+
+  return {
+    canSignProvisionalPv: quorumOk && (!input.hasReserves || Boolean(input.reservesLiftDeadlineIso)),
+    provisionalDecision,
+    warrantyEndDateIso: warrantyEnd.toISOString().slice(0, 10),
+    canReleasePerformanceBond: quorumOk && !reservesRemaining,
+    blockingReasons,
+  };
+}
+
+export interface FinalReceptionInput {
+  provisionalReceptionPronounced: boolean;
+  reservesLifted: boolean;
+  warrantyEndDateIso: string;
+  evaluationDateIso: string;
+  retentionGuaranteeTotalFcfa: number;
+  dgdNetBalanceFcfa: number;
+  attendanceSignedCount: number;
+  quorumRequiredCount: number;
+}
+
+export interface FinalReceptionEvaluation {
+  eligibleForFinalReception: boolean;
+  daysUntilWarrantyEnd: number;
+  canReleaseRetentionGuarantee: boolean;
+  retentionToReleaseFcfa: number;
+  dgdLiquidationStatus: 'PRET_POUR_MANDATEMENT' | 'BLOQUE';
+  blockingReasons: string[];
+}
+
+export function evaluateFinalReception(
+  input: FinalReceptionInput
+): FinalReceptionEvaluation {
+  const blockingReasons: string[] = [];
+
+  if (!input.provisionalReceptionPronounced) {
+    blockingReasons.push('La réception provisoire préalable n’est pas encore prononcée.');
+  }
+  if (!input.reservesLifted) {
+    blockingReasons.push('Les réserves de la réception provisoire ne sont pas encore levées.');
+  }
+  if (input.attendanceSignedCount < input.quorumRequiredCount) {
+    blockingReasons.push(
+      `Quorum commission de réception définitive non atteint (${input.attendanceSignedCount}/${input.quorumRequiredCount}).`
+    );
+  }
+
+  const endMs = new Date(input.warrantyEndDateIso).getTime();
+  const evalMs = new Date(input.evaluationDateIso).getTime();
+  const daysUntilWarrantyEnd = Math.ceil((endMs - evalMs) / (24 * 60 * 60 * 1000));
+
+  if (daysUntilWarrantyEnd > 0) {
+    blockingReasons.push(
+      `Délai de garantie contractuel non expiré (${daysUntilWarrantyEnd} jour(s) restant(s) jusqu’au ${input.warrantyEndDateIso.slice(0, 10)}).`
+    );
+  }
+
+  const eligible = blockingReasons.length === 0;
+
+  return {
+    eligibleForFinalReception: eligible,
+    daysUntilWarrantyEnd: Math.max(0, daysUntilWarrantyEnd),
+    canReleaseRetentionGuarantee: eligible,
+    retentionToReleaseFcfa: eligible ? roundFcfa(input.retentionGuaranteeTotalFcfa) : 0,
+    dgdLiquidationStatus: eligible ? 'PRET_POUR_MANDATEMENT' : 'BLOQUE',
+    blockingReasons,
+  };
+}
+

@@ -19,6 +19,7 @@ import {
   DISPUTE_LEGAL_AUDITOR_SYSTEM_PROMPT,
   formatLegalRagContext,
 } from './legalPrompts';
+import { searchLocalLegalCorpus } from '../legal/cameroonLegalCorpus';
 
 /**
  * Moteur 4 (Jalon 3) : Assistant d'Audit & Réponse aux Contentieux
@@ -591,7 +592,14 @@ export async function analyzeAndDraftDisputeResponse(
 
   if (input.useAiSynthesis) {
     try {
-      const ragContext = formatLegalRagContext(input.legalChunks);
+      const legalMatches =
+        input.legalChunks && input.legalChunks.length > 0
+          ? input.legalChunks
+          : searchLocalLegalCorpus(
+              `${input.stage} ${input.subject} ${input.groundsSummary} ${input.grievances.join(' ')}`,
+              { limit: 4 }
+            );
+      const ragContext = formatLegalRagContext(legalMatches);
       const aiPrompt = [
         `Dossier : ${input.projectCode} — ${input.projectTitle} (Mode: ${input.procurementMode})`,
         `Recours n° ${input.disputeNumber} introduit par ${input.claimantName} au stade ${input.stage}.`,

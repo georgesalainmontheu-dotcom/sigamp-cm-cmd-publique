@@ -172,7 +172,7 @@ export function AppShell({ activeSpace, onSelectSpace, children }: AppShellProps
                   SIGAMP-CM
                 </span>
                 <span className="rounded bg-gov-gold/20 px-1.5 py-0.5 text-[10px] font-semibold text-gov-gold">
-                  CMP 2018/366 · V1.1 Sécurisée
+                  CMP 2018/366 · V2.0 Chaîne Intégrale
                 </span>
                 {demoMode && (
                   <span className="rounded bg-amber-400/20 px-1.5 py-0.5 text-[10px] font-semibold text-amber-200">
