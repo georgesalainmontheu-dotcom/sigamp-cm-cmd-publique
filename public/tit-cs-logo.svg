@@ -1,0 +1,17 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 500 500" role="img" aria-label="Logo TIT-Consulting Solutions (TIT-CS)">
+  <rect width="500" height="500" rx="48" fill="#0A1F3D" />
+  <polygon points="250,40 430,140 430,360 250,460 70,360 70,140" fill="none" stroke="#D4AF37" stroke-width="8" />
+  <polygon points="250,58 414,150 414,350 250,442 86,350 86,150" fill="none" stroke="#E8C77E" stroke-width="2" opacity="0.65" />
+  <g transform="translate(0, -10)">
+    <path d="M 120 180 H 200 V 210 H 175 V 320 H 145 V 210 H 120 Z" fill="#D4AF37" />
+    <path d="M 300 180 H 380 V 210 H 355 V 320 H 325 V 210 H 300 Z" fill="#D4AF37" />
+    <rect x="220" y="180" width="60" height="20" fill="#E8C77E" />
+    <rect x="220" y="300" width="60" height="20" fill="#E8C77E" />
+    <rect x="240" y="200" width="20" height="35" fill="#D4AF37" />
+    <rect x="240" y="265" width="20" height="35" fill="#D4AF37" />
+    <circle cx="250" cy="250" r="18" fill="#F4D67A" />
+    <circle cx="250" cy="250" r="10" fill="#FFFFFF" />
+    <path d="M 250 232 L 250 200" stroke="#F4D67A" stroke-width="3" />
+    <path d="M 250 268 L 250 300" stroke="#F4D67A" stroke-width="3" />
+  </g>
+</svg>

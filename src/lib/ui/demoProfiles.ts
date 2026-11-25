@@ -1,5 +1,6 @@
 import type { EntityType, RbacRole } from '../../types/domain';
 import type { IndemnityScale } from '../domain/indemnityEngine';
+import type { EntityLicenseStatus } from '../domain/licensingEngine';
 
 export type WorkspaceSpaceId =
   | 'SIGAMP_MO'
@@ -24,6 +25,13 @@ export interface ActiveRoleProfile {
   fiscalYear: number;
   description: string;
   quickAiPrompts: string[];
+  isPlatformSuperAdmin?: boolean;
+  isEntityAdmin?: boolean;
+  licenseStatus?: EntityLicenseStatus;
+  licensePlanCode?: string;
+  licenseExpiresAt?: string | null;
+  primaryColor?: string;
+  accentColor?: string;
 }
 
 export const ROLE_PROFILES: ActiveRoleProfile[] = [

@@ -5,9 +5,11 @@ import {
   Building2,
   CloudOff,
   LogOut,
+  Palette,
   RefreshCw,
   Search,
   Shield,
+  ShieldAlert,
   Trash2,
   Wifi,
   WifiOff,
@@ -30,6 +32,11 @@ import {
   type WorkspaceSpaceId,
 } from '../../lib/ui/demoProfiles';
 import { GlobalAiCommandBar } from '../ai/GlobalAiCommandBar';
+import { TitCsBrandFooter } from '../branding/TitCsBrandFooter';
+import {
+  AdminStudioWorkspace,
+  type StudioPublishedPayload,
+} from '../workspaces/AdminStudioWorkspace';
 
 interface AppShellProps {
   activeSpace: WorkspaceSpaceId;
@@ -44,6 +51,8 @@ interface AppShellProps {
 export function AppShell({ activeSpace, onSelectSpace, children }: AppShellProps) {
   const router = useRouter();
   const [aiOpen, setAiOpen] = useState(false);
+  const [studioOpen, setStudioOpen] = useState(false);
+  const [studioOverride, setStudioOverride] = useState<StudioPublishedPayload | null>(null);
   const sync = useOfflineSyncStatus();
   const demoMode = isDemoRoleSwitcherEnabled();
 
@@ -91,10 +100,25 @@ export function AppShell({ activeSpace, onSelectSpace, children }: AppShellProps
   }, [demoMode, router, activeSpace, onSelectSpace]);
 
   const availableProfiles = demoMode ? ROLE_PROFILES : realProfiles;
-  const activeProfile =
+  const baseProfile =
     availableProfiles.find((p) => p.spaceId === activeSpace) ??
     availableProfiles[0] ??
     ROLE_PROFILES[0]!;
+
+  const activeProfile: ActiveRoleProfile = studioOverride
+    ? {
+        ...baseProfile,
+        entityName: studioOverride.identity.entityName,
+        primaryColor: studioOverride.identity.primaryColor,
+        accentColor: studioOverride.identity.accentColor,
+      }
+    : baseProfile;
+
+  const canAccessStudio =
+    demoMode ||
+    Boolean(activeProfile.isPlatformSuperAdmin) ||
+    Boolean(activeProfile.isEntityAdmin) ||
+    ['SIGAMP', 'MO_MOD', 'SUPER_ADMIN', 'ADMIN_ENTITE'].includes(activeProfile.roleCode);
 
   useEffect(() => {
     const onKeyDown = (e: KeyboardEvent) => {
@@ -140,7 +164,7 @@ export function AppShell({ activeSpace, onSelectSpace, children }: AppShellProps
           </h1>
           <p className="mt-2 text-xs text-slate-600">
             Le compte <strong>{authEmail ?? 'connecté'}</strong> ne possède aucun
-            rôle actif sur une entité publique. Contactez votre administrateur SIGAMP.
+            rôle actif sur cette entité publique. Contactez votre administrateur SIGAMP.
           </p>
           <button
             type="button"
@@ -156,11 +180,17 @@ export function AppShell({ activeSpace, onSelectSpace, children }: AppShellProps
   }
 
   const totalPending = sync.pendingMutationsCount + sync.pendingAttachmentsCount;
+  const headerBgStyle = activeProfile.primaryColor
+    ? { backgroundColor: activeProfile.primaryColor }
+    : undefined;
 
   return (
-    <div className="min-h-screen bg-gov-slate text-slate-900">
+    <div className="flex min-h-screen flex-col bg-gov-slate text-slate-900">
       {/* Bandeau Républicain & Etat Réseau / Sync */}
-      <header className="sticky top-0 z-30 border-b border-gov-gold/40 bg-gov-navy text-white shadow-md">
+      <header
+        style={headerBgStyle}
+        className="sticky top-0 z-30 border-b border-gov-gold/40 bg-gov-navy text-white shadow-md"
+      >
         <div className="mx-auto flex max-w-7xl flex-wrap items-center justify-between gap-3 px-4 py-3 sm:px-6">
           <div className="flex items-center gap-3">
             <div className="flex h-10 w-10 items-center justify-center rounded-xl border border-gov-gold/60 bg-gov-navyLight">
@@ -172,7 +202,7 @@ export function AppShell({ activeSpace, onSelectSpace, children }: AppShellProps
                   SIGAMP-CM
                 </span>
                 <span className="rounded bg-gov-gold/20 px-1.5 py-0.5 text-[10px] font-semibold text-gov-gold">
-                  CMP 2018/366 · V2.0 Chaîne Intégrale
+                  CMP 2018/366 · V2.1 Élargie
                 </span>
                 {demoMode && (
                   <span className="rounded bg-amber-400/20 px-1.5 py-0.5 text-[10px] font-semibold text-amber-200">
@@ -188,6 +218,21 @@ export function AppShell({ activeSpace, onSelectSpace, children }: AppShellProps
           </div>
 
           <div className="flex flex-wrap items-center gap-2">
+            {canAccessStudio && (
+              <button
+                type="button"
+                onClick={() => setStudioOpen((v) => !v)}
+                className={`inline-flex items-center gap-1.5 rounded-xl border px-3 py-2 text-xs font-semibold transition ${
+                  studioOpen
+                    ? 'border-[#D4AF37] bg-[#D4AF37] text-[#0A1F3D]'
+                    : 'border-[#D4AF37]/50 bg-[#D4AF37]/15 text-[#D4AF37] hover:bg-[#D4AF37]/25'
+                }`}
+              >
+                <Palette className="h-3.5 w-3.5" />
+                <span>{studioOpen ? 'Retour Espace Métier' : 'Studio & Admin V2.1'}</span>
+              </button>
+            )}
+
             {/* Bouton Copilote IA Ctrl+K */}
             <button
               type="button"
@@ -287,12 +332,15 @@ export function AppShell({ activeSpace, onSelectSpace, children }: AppShellProps
               {demoMode ? 'Espace RBAC (Démo) :' : 'Vos habilitations :'}
             </span>
             {availableProfiles.map((p) => {
-              const active = p.spaceId === activeProfile.spaceId;
+              const active = !studioOpen && p.spaceId === activeProfile.spaceId;
               return (
                 <button
                   key={`${p.spaceId}-${p.roleCode}`}
                   type="button"
-                  onClick={() => onSelectSpace(p.spaceId)}
+                  onClick={() => {
+                    setStudioOpen(false);
+                    onSelectSpace(p.spaceId);
+                  }}
                   className={`shrink-0 rounded-lg px-3 py-1.5 text-xs font-medium transition ${
                     active
                       ? 'bg-gov-gold text-gov-navy shadow-sm'
@@ -307,11 +355,28 @@ export function AppShell({ activeSpace, onSelectSpace, children }: AppShellProps
         </div>
       </header>
 
+      {/* Bandeau Licence Expirée / Restreinte si applicable */}
+      {(activeProfile.licenseStatus === 'EXPIREE' ||
+        activeProfile.licenseStatus === 'SUSPENDUE') && (
+        <div className="border-b border-rose-300 bg-rose-50 px-4 py-2 text-xs text-rose-900">
+          <div className="mx-auto flex max-w-7xl items-center gap-2 font-medium">
+            <ShieldAlert className="h-4 w-4 shrink-0 text-rose-700" />
+            <span>
+              Licence {activeProfile.licenseStatus} pour {activeProfile.entityName} : la
+              consultation des archives reste autorisée, mais la création de nouveaux actes
+              est bloquée jusqu’au renouvellement auprès de TIT-CS.
+            </span>
+          </div>
+        </div>
+      )}
+
       {/* Bandeau Profil Actif */}
       <div className="border-b border-slate-200 bg-white">
         <div className="mx-auto flex max-w-7xl flex-wrap items-center justify-between gap-2 px-4 py-2.5 text-xs text-slate-600 sm:px-6">
           <div>
-            <span className="font-semibold text-gov-navy">{activeProfile.label}</span>
+            <span className="font-semibold text-gov-navy">
+              {studioOpen ? 'Studio CMS & Double Gouvernance (V2.1)' : activeProfile.label}
+            </span>
             <span className="mx-2 text-slate-300">|</span>
             <span>
               Connecté : <strong>{activeProfile.fullName}</strong> ({activeProfile.roleCode})
@@ -333,13 +398,22 @@ export function AppShell({ activeSpace, onSelectSpace, children }: AppShellProps
       </div>
 
       {/* Contenu principal de l'espace */}
-      <main className="mx-auto max-w-7xl px-4 py-6 sm:px-6">
-        {children({
-          profile: activeProfile,
-          isOnline: sync.isOnline,
-          triggerSync: sync.triggerSync,
-        })}
+      <main className="mx-auto w-full max-w-7xl flex-1 px-4 py-6 sm:px-6">
+        {studioOpen ? (
+          <AdminStudioWorkspace
+            profile={activeProfile}
+            onStudioPublished={(pub) => setStudioOverride(pub)}
+          />
+        ) : (
+          children({
+            profile: activeProfile,
+            isOnline: sync.isOnline,
+            triggerSync: sync.triggerSync,
+          })
+        )}
       </main>
+
+      <TitCsBrandFooter />
 
       {/* Barre de Commande IA Ctrl+K */}
       <GlobalAiCommandBar

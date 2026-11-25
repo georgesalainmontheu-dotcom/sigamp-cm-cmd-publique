@@ -1,6 +1,7 @@
 import { createClient } from '@supabase/supabase-js';
 import { Building2, Calendar, FileText, ShieldCheck } from 'lucide-react';
 import Link from 'next/link';
+import { TitCsBrandFooter } from '../../components/branding/TitCsBrandFooter';
 
 export const dynamic = 'force-dynamic';
 
@@ -150,6 +151,7 @@ export default async function PublicAvisPage() {
           ))}
         </div>
       </main>
+      <TitCsBrandFooter compact />
     </div>
   );
 }

@@ -1033,3 +1033,41 @@ export async function pruneClosedRecordsFromLocalCache(
   };
 }
 
+/**
+ * Purge complète des enregistrements locaux (IndexedDB) et de la file de mutations
+ * appartenant à une entité spécifique lors de la Remise à Zéro Production (Axe 5 V2.1).
+ */
+export async function purgeEntityTestCacheFromDexie(
+  entityId: string,
+  db?: CommandePubliqueOfflineDB
+): Promise<{ deletedRecords: number; deletedQueueItems: number }> {
+  if (typeof window === 'undefined' && !db) {
+    return { deletedRecords: 0, deletedQueueItems: 0 };
+  }
+  const targetDb = db ?? getOfflineDb();
+  let deletedRecords = 0;
+
+  for (const tableName of SYNCABLE_TABLES) {
+    const table = targetDb.getEntityTable(tableName);
+    const rows = await table.toArray();
+    const ids = rows.filter((r) => r.entity_id === entityId).map((r) => r.id);
+    if (ids.length > 0) {
+      await table.bulkDelete(ids);
+      deletedRecords += ids.length;
+    }
+  }
+
+  const queueItems = await targetDb.mutationQueue.toArray();
+  const qIds = queueItems
+    .filter((q) => q.payload?.entity_id === entityId)
+    .map((q) => q.id!)
+    .filter((id) => typeof id === 'number');
+  if (qIds.length > 0) {
+    await targetDb.mutationQueue.bulkDelete(qIds);
+  }
+
+  await notifyStatusListeners(targetDb);
+  return { deletedRecords, deletedQueueItems: qIds.length };
+}
+
+

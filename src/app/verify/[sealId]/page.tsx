@@ -1,6 +1,7 @@
 import { createClient } from '@supabase/supabase-js';
 import { CheckCircle2, FileCheck2, ShieldAlert, ShieldCheck } from 'lucide-react';
 import Link from 'next/link';
+import { TitCsBrandFooter } from '../../../components/branding/TitCsBrandFooter';
 
 export const dynamic = 'force-dynamic';
 
@@ -127,6 +128,9 @@ export default async function VerifySealPage({
             procédure en vigueur.
           </p>
         </div>
+      </div>
+      <div className="mt-8">
+        <TitCsBrandFooter compact />
       </div>
     </div>
   );

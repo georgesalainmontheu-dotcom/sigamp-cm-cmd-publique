@@ -14,6 +14,7 @@ export type EntityType =
 
 export type RbacRole =
   | 'SUPER_ADMIN'
+  | 'ADMIN_ENTITE'
   | 'MO_MOD'
   | 'SIGAMP'
   | 'CPM_PRESIDENT'
