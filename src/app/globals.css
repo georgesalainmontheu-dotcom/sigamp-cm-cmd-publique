@@ -1,0 +1,16 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --gov-navy: #0a1f3d;
+  --gov-gold: #d4af37;
+  --gov-emerald: #007a5e;
+  --gov-crimson: #ce1126;
+}
+
+body {
+  background-color: #f4f6f9;
+  color: #0f172a;
+  font-family: Inter, system-ui, -apple-system, sans-serif;
+}

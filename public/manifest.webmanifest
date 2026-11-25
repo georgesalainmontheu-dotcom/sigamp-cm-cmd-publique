@@ -1,0 +1,17 @@
+{
+  "name": "SIGAMP-CM | Commande Publique Cameroun",
+  "short_name": "SIGAMP-CM",
+  "description": "Système Intégré Local-First de Gestion de la Commande Publique du Cameroun (CMP, Indemnités, Décomptes, IA & Contentieux)",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#0A1F3D",
+  "theme_color": "#0A1F3D",
+  "lang": "fr-CM",
+  "icons": [
+    {
+      "src": "/icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml"
+    }
+  ]
+}

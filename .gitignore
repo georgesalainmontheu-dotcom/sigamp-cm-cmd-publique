@@ -1,0 +1,26 @@
+# Secrets & environnement
+.env
+.env.*
+!.env.example
+
+# Dependencies & builds
+node_modules/
+.next/
+.vercel/
+dist/
+build/
+coverage/
+*.tsbuildinfo
+next-env.d.ts
+
+# Sandbox / OS / caches
+.npm/
+.cache/
+.config/
+.local/
+.sudo_as_admin_successful
+
+# Livrables annexes & archives
+uploads/
+Note_Approche_Strategique_TIT-CS_Hotel_Franco.*
+*.tar.gz
