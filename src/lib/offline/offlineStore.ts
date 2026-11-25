@@ -1,8 +1,9 @@
 'use client';
 
-import { createClient, type SupabaseClient } from '@supabase/supabase-js';
+import type { SupabaseClient } from '@supabase/supabase-js';
 import Dexie, { type Table } from 'dexie';
 import { useCallback, useEffect, useState } from 'react';
+import { getSupabaseBrowserClient } from '../supabase/client';
 
 /**
  * Moteur Local-First & Synchronisation Bidirectionnelle Offline (Jalon 4)
@@ -431,10 +432,29 @@ export interface RemoteSyncTransport {
 }
 
 export function createSupabaseBrowserClient(): SupabaseClient | null {
-  const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
-  const key = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
-  if (!url || !key) return null;
-  return createClient(url, key);
+  return getSupabaseBrowserClient();
+}
+
+const LOCAL_ONLY_METADATA_KEYS = new Set([
+  'syncStatus',
+  'provisional_chrono_field',
+  'chrono_doc_type',
+  'chrono_prefix',
+  'provisional_chrono_replaced',
+  'is_closed',
+  'closed_at',
+]);
+
+export function sanitizePayloadForSupabase(
+  payload: Record<string, unknown>
+): Record<string, unknown> {
+  const cleaned: Record<string, unknown> = {};
+  for (const [k, v] of Object.entries(payload)) {
+    if (!LOCAL_ONLY_METADATA_KEYS.has(k) && v !== undefined) {
+      cleaned[k] = v;
+    }
+  }
+  return cleaned;
 }
 
 export function createSupabaseSyncTransport(client: SupabaseClient): RemoteSyncTransport {
@@ -450,10 +470,12 @@ export function createSupabaseSyncTransport(client: SupabaseClient): RemoteSyncT
           return { ok: true };
         }
 
+        const remotePayload = sanitizePayloadForSupabase(mutation.payload);
+
         if (mutation.operation === 'INSERT') {
           const { data, error } = await client
             .from(mutation.tableName)
-            .upsert(mutation.payload, { onConflict: 'id' })
+            .upsert(remotePayload, { onConflict: 'id' })
             .select()
             .single();
           if (error) {
@@ -483,7 +505,7 @@ export function createSupabaseSyncTransport(client: SupabaseClient): RemoteSyncT
 
         const { data, error } = await client
           .from(mutation.tableName)
-          .update(mutation.payload)
+          .update(remotePayload)
           .eq('id', mutation.recordId)
           .select()
           .single();

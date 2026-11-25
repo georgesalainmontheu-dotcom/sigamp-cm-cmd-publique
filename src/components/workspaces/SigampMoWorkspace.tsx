@@ -296,8 +296,12 @@ export function SigampMoWorkspace({ profile }: { profile: ActiveRoleProfile }) {
     if (!liveRouting) return;
     const effectiveCode =
       newCode.trim() || generateProvisionalChronoId('PROV');
+    const newUuid =
+      typeof globalThis.crypto?.randomUUID === 'function'
+        ? globalThis.crypto.randomUUID()
+        : `44444444-4444-4444-8444-${String(Date.now()).slice(-12).padStart(12, '0')}`;
     const item: ProjectItem = {
-      id: `proj-${Date.now()}`,
+      id: newUuid,
       code: effectiveCode,
       title: newTitle,
       nature: newNature,
@@ -316,15 +320,17 @@ export function SigampMoWorkspace({ profile }: { profile: ActiveRoleProfile }) {
         {
           id: item.id,
           entity_id: profile.entityId,
-          project_code: newCode.trim() || undefined,
-          code: item.code,
+          fiscal_year: profile.fiscalYear,
+          reference_code: newCode.trim() || undefined,
           title: item.title,
           nature: item.nature,
+          mode: item.mode,
+          estimated_amount_ht: Math.round(item.amountTtc / 1.1925),
           estimated_amount_ttc: item.amountTtc,
-          procurement_mode: item.mode,
+          status: 'MATURATION',
         },
         {
-          chronoField: 'project_code',
+          chronoField: 'reference_code',
           docType: 'PROJ',
           chronoPrefix: profile.entityCode,
           fiscalYear: profile.fiscalYear,
