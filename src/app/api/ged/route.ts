@@ -30,10 +30,27 @@ export async function GET(req: Request): Promise<Response> {
   const entityId = url.searchParams.get('entityId');
   const projectId = url.searchParams.get('projectId');
   const folderCode = url.searchParams.get('folderCode');
+  const downloadPath = url.searchParams.get('downloadPath');
   const q = (url.searchParams.get('q') ?? '').trim();
 
   if (!entityId) {
     return Response.json({ error: 'entityId requis.' }, { status: 400 });
+  }
+
+  if (downloadPath) {
+    if (!downloadPath.startsWith(`ged/${entityId}/`)) {
+      return Response.json({ error: 'Accès fichier interdit hors périmètre entité.' }, { status: 403 });
+    }
+    const { data: signed, error: signErr } = await admin.storage
+      .from('marches-documents')
+      .createSignedUrl(downloadPath, 600);
+    if (signErr || !signed?.signedUrl) {
+      return Response.json(
+        { error: signErr?.message ?? 'Impossible de générer le lien signé Storage.' },
+        { status: 400 }
+      );
+    }
+    return Response.json({ signedUrl: signed.signedUrl });
   }
 
   let query = admin
@@ -75,6 +92,7 @@ interface ArchiveGedBody {
   fileSizeBytes?: number;
   sha256Hash?: string;
   contentText?: string;
+  fileBase64?: string;
   qrVerificationId?: string;
   lifecycleStatus?: GedLifecycleStatus;
   actorRole?: string;
@@ -119,6 +137,22 @@ export async function POST(req: Request): Promise<Response> {
       body.sha256Hash ||
       (await computeSha256Hex(`${body.entityId}|${body.title}|${body.contentText ?? ''}|${Date.now()}`));
 
+    let storagePath: string | null = null;
+    if (body.fileBase64) {
+      const safeFile = body.fileName.replace(/[^A-Za-z0-9._-]+/g, '_');
+      const targetPath = `ged/${body.entityId}/${folderCode}/${Date.now()}_${safeFile}`;
+      const buf = Buffer.from(body.fileBase64, 'base64');
+      const { error: uploadErr } = await admin.storage
+        .from('marches-documents')
+        .upload(targetPath, buf, {
+          contentType: body.mimeType || 'application/pdf',
+          upsert: true,
+        });
+      if (!uploadErr) {
+        storagePath = targetPath;
+      }
+    }
+
     const { data: created, error } = await admin
       .from('ged_documents')
       .insert({
@@ -135,6 +169,7 @@ export async function POST(req: Request): Promise<Response> {
         sha256_hash: computedHash,
         version_number: 1,
         lifecycle_status: body.lifecycleStatus ?? 'SIGNE_SCELLE',
+        storage_path: storagePath,
         content_text: body.contentText || null,
         qr_verification_id: body.qrVerificationId || null,
         actor_user_id: guard.userId,
@@ -151,6 +186,7 @@ export async function POST(req: Request): Promise<Response> {
       version_number: 1,
       sha256_hash: computedHash,
       file_size_bytes: body.fileSizeBytes ?? (body.contentText?.length ?? 1024),
+      storage_path: storagePath,
       change_note: 'Archivage initial SIGAMP-CM V3.0',
       created_by: guard.userId,
     });

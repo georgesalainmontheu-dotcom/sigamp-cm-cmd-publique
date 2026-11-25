@@ -200,6 +200,20 @@ export function AdminStudioWorkspace({
     'Chap. 22 / Art. 2210 — Équipements & Travaux (350 000 000 FCFA)\nChap. 62 / Art. 6210 — Indemnités de Session CPM/SCA (8 000 000 FCFA)'
   );
 
+  // Supervision multi-entités (Super Admin)
+  const [supervisionRows, setSupervisionRows] = useState<
+    Array<{
+      id: string;
+      code: string;
+      name: string;
+      type: EntityType;
+      parent_entity_id?: string | null;
+      activeLoginsCount: number;
+      projectsCount: number;
+      license?: { plan_code?: string; status?: string; expires_at?: string } | null;
+    }>
+  >([]);
+
   // Remise à zéro Production (Axe 5)
   const [confirmEntityCode, setConfirmEntityCode] = useState('');
   const [resetReason, setResetReason] = useState('');
@@ -230,14 +244,26 @@ export function AdminStudioWorkspace({
   const loadEntityData = useCallback(async (targetEntityId: string) => {
     try {
       const headers = await buildAuthenticatedJsonHeaders();
-      const [studioRes, licRes] = await Promise.all([
+      const [studioRes, licRes, supRes] = await Promise.all([
         fetch(`/api/admin/entity-studio?entityId=${encodeURIComponent(targetEntityId)}`, {
           headers,
         }),
         fetch(`/api/admin/licenses?entityId=${encodeURIComponent(targetEntityId)}`, {
           headers,
         }),
+        isSuperAdmin
+          ? fetch('/api/admin/entities', { headers })
+          : Promise.resolve(null),
       ]);
+
+      if (supRes && supRes.ok) {
+        const supJson = (await supRes.json()) as {
+          supervision?: typeof supervisionRows;
+        };
+        if (supJson.supervision) {
+          setSupervisionRows(supJson.supervision);
+        }
+      }
 
       if (studioRes.ok) {
         const sJson = (await studioRes.json()) as {
@@ -1000,6 +1026,64 @@ export function AdminStudioWorkspace({
                   </div>
                 </div>
                 <p className="text-[11px] text-slate-600">{licenseEval.statusMessage}</p>
+
+                {supervisionRows.length > 0 && (
+                  <div className="mt-3 border-t border-slate-100 pt-3">
+                    <div className="mb-2 font-bold text-[#0A1F3D]">
+                      Supervision Multi-Entités &amp; Hiérarchie de Tutelle ({supervisionRows.length})
+                    </div>
+                    <div className="overflow-x-auto">
+                      <table className="w-full text-left text-[11px]">
+                        <thead>
+                          <tr className="border-b border-slate-200 bg-slate-50 text-slate-600">
+                            <th className="p-1.5">Code</th>
+                            <th className="p-1.5">Entité &amp; Type</th>
+                            <th className="p-1.5">Logins</th>
+                            <th className="p-1.5">Marchés</th>
+                            <th className="p-1.5">Licence</th>
+                            <th className="p-1.5"></th>
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y divide-slate-100">
+                          {supervisionRows.map((row) => (
+                            <tr key={row.id}>
+                              <td className="p-1.5 font-mono font-semibold">{row.code}</td>
+                              <td className="p-1.5">
+                                <div className="font-semibold text-slate-900">{row.name}</div>
+                                <div className="text-[10px] text-slate-500">
+                                  {row.type}
+                                  {row.parent_entity_id ? ' · Sous tutelle' : ''}
+                                </div>
+                              </td>
+                              <td className="p-1.5">{row.activeLoginsCount}</td>
+                              <td className="p-1.5">{row.projectsCount}</td>
+                              <td className="p-1.5">
+                                <span
+                                  className={`rounded-full px-2 py-0.5 text-[10px] font-bold ${
+                                    row.license?.status === 'ACTIVE'
+                                      ? 'bg-emerald-100 text-emerald-800'
+                                      : 'bg-rose-100 text-rose-800'
+                                  }`}
+                                >
+                                  {row.license?.status ?? 'N/A'}
+                                </span>
+                              </td>
+                              <td className="p-1.5 text-right">
+                                <button
+                                  type="button"
+                                  onClick={() => setSelectedEntityId(row.id)}
+                                  className="rounded bg-[#0A1F3D] px-2 py-1 text-[10px] font-semibold text-white"
+                                >
+                                  Piloter
+                                </button>
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+                )}
               </div>
             )}
 

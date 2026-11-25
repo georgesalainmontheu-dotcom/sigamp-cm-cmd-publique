@@ -157,6 +157,15 @@ export function GedArchiveWorkspace({ profile }: { profile: ActiveRoleProfile })
     const sha256 = await computeSha256Hex(bytesOrText);
     const resolvedFolder = newFolder || resolveGedFolderForAct(newCategory);
 
+    let fileBase64: string | undefined;
+    if (newFile && newFile.size <= 4 * 1024 * 1024 && bytesOrText instanceof Uint8Array) {
+      let binary = '';
+      for (let i = 0; i < bytesOrText.length; i += 1) {
+        binary += String.fromCharCode(bytesOrText[i]!);
+      }
+      fileBase64 = btoa(binary);
+    }
+
     try {
       const headers = await buildAuthenticatedJsonHeaders();
       const res = await fetch('/api/ged', {
@@ -174,6 +183,7 @@ export function GedArchiveWorkspace({ profile }: { profile: ActiveRoleProfile })
           fileSizeBytes: size,
           sha256Hash: sha256,
           contentText: newContent.trim() || newTitle.trim(),
+          fileBase64,
           lifecycleStatus: 'SIGNE_SCELLE',
           actorRole: profile.roleCode,
         }),
@@ -212,6 +222,26 @@ export function GedArchiveWorkspace({ profile }: { profile: ActiveRoleProfile })
       setShowUploadForm(false);
     } catch (err) {
       setStatusMessage(err instanceof Error ? err.message : 'Erreur archivage GED.');
+    }
+  };
+
+  const handleDownloadStoredFile = async (storagePath: string) => {
+    try {
+      const headers = await buildAuthenticatedJsonHeaders();
+      const res = await fetch(
+        `/api/ged?entityId=${encodeURIComponent(profile.entityId)}&downloadPath=${encodeURIComponent(
+          storagePath
+        )}`,
+        { headers }
+      );
+      const json = (await res.json()) as { signedUrl?: string; error?: string };
+      if (res.ok && json.signedUrl) {
+        window.open(json.signedUrl, '_blank', 'noopener,noreferrer');
+      } else {
+        setStatusMessage(json.error ?? 'Impossible de récupérer la pièce Storage.');
+      }
+    } catch {
+      setStatusMessage('Erreur lors de l’ouverture du lien signé Storage.');
     }
   };
 
@@ -509,17 +539,29 @@ export function GedArchiveWorkspace({ profile }: { profile: ActiveRoleProfile })
                       Catégorie : <strong>{doc.document_category}</strong> · Taille :{' '}
                       {Math.max(1, Math.round(doc.file_size_bytes / 1024))} Ko
                     </span>
-                    {doc.qr_verification_id && (
-                      <a
-                        href={`/verify/${doc.qr_verification_id}`}
-                        target="_blank"
-                        rel="noreferrer"
-                        className="inline-flex items-center gap-1 font-semibold text-gov-navy hover:underline"
-                      >
-                        <FileCheck2 className="h-3.5 w-3.5 text-gov-gold" />
-                        Vérifier sceau QR ({doc.qr_verification_id})
-                      </a>
-                    )}
+                    <div className="flex flex-wrap items-center gap-3">
+                      {doc.storage_path && (
+                        <button
+                          type="button"
+                          onClick={() => void handleDownloadStoredFile(doc.storage_path!)}
+                          className="inline-flex items-center gap-1 font-semibold text-emerald-700 hover:underline"
+                        >
+                          <Download className="h-3.5 w-3.5" />
+                          Télécharger original (Storage)
+                        </button>
+                      )}
+                      {doc.qr_verification_id && (
+                        <a
+                          href={`/verify/${doc.qr_verification_id}`}
+                          target="_blank"
+                          rel="noreferrer"
+                          className="inline-flex items-center gap-1 font-semibold text-gov-navy hover:underline"
+                        >
+                          <FileCheck2 className="h-3.5 w-3.5 text-gov-gold" />
+                          Vérifier sceau QR ({doc.qr_verification_id})
+                        </a>
+                      )}
+                    </div>
                   </div>
                 </div>
               ))
