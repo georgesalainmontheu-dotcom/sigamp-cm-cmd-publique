@@ -341,7 +341,10 @@ export interface DisputeAuditInput {
   filedAtIso: string;
   referenceEventAtIso: string; // Date publication attribution ou rejet ou PV ouverture
   priorMoSeizureVerified: boolean;
-  legalDeadlineBusinessDays?: number; // Défaut CMP = 5 jours ouvrables
+  appealBondRequired?: boolean;
+  appealBondRef?: string;
+  appealBondAmountFcfa?: number;
+  legalDeadlineBusinessDays?: number; // Défaut CMP = 5 jours ouvrables en passation
   extraHolidaysIso?: string[];
   subject: string;
   groundsSummary: string;
@@ -357,6 +360,7 @@ export interface DisputeAuditInput {
 }
 
 export interface AdmissibilityCheckResult {
+  stage: DisputeStage;
   referenceEventAtIso: string;
   filedAtIso: string;
   legalDeadlineDateIso: string;
@@ -364,6 +368,10 @@ export interface AdmissibilityCheckResult {
   legalDeadlineBusinessDays: number;
   isWithinDeadline: boolean;
   priorMoSeizureVerified: boolean;
+  appealBondRequired: boolean;
+  appealBondProvided: boolean;
+  appealBondRef?: string;
+  missingAdmissibilityElements: string[];
   isAdmissible: boolean;
   isForeclosed: boolean;
   suspensionActive: boolean;

@@ -10,6 +10,7 @@ import {
   AI_TOOL_DEFINITIONS,
   runAgenticWorkflow,
 } from '../../../../lib/ai/aiTools';
+import { guardAiApiRequest } from '../../../../lib/security/apiAuthAndRateLimit';
 import type {
   AiChatMessage,
   AiProviderId,
@@ -19,7 +20,10 @@ import type {
 
 export const runtime = 'nodejs';
 
-export async function GET(): Promise<Response> {
+export async function GET(req: Request): Promise<Response> {
+  const guard = await guardAiApiRequest(req);
+  if (!guard.ok) return guard.response;
+
   const cfg = resolveAiProviderConfig();
   return Response.json({
     status: 'ok',
@@ -54,6 +58,9 @@ interface GatewayPostBody {
 }
 
 export async function POST(req: Request): Promise<Response> {
+  const guard = await guardAiApiRequest(req);
+  if (!guard.ok) return guard.response;
+
   try {
     const body = (await req.json()) as GatewayPostBody;
     const mode = body.mode ?? (body.userPrompt && body.context ? 'copilot' : 'gateway');

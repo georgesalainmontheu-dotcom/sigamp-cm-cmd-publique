@@ -291,7 +291,66 @@ export function CommissionScaWorkspace({ profile }: { profile: ActiveRoleProfile
             </div>
           </div>
 
-          <div className="mt-4 overflow-x-auto">
+          {/* Vue Mobile (< 640px) : Cartes empilées */}
+          <div className="mt-4 space-y-3 sm:hidden">
+            {bids.map((b) => {
+              const oabInfo = oabReport?.analyses.find((x) => x.bidId === b.bidId);
+              return (
+                <div
+                  key={b.bidId}
+                  className="rounded-xl border border-slate-200 bg-slate-50/70 p-3.5 text-xs"
+                >
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="font-semibold text-gov-navy">{b.supplierName}</span>
+                    <span
+                      className={`rounded px-2 py-0.5 text-[10px] font-bold ${
+                        b.adminCompliant
+                          ? 'bg-emerald-100 text-emerald-800'
+                          : 'bg-rose-100 text-rose-800'
+                      }`}
+                    >
+                      {b.adminCompliant ? 'CONFORME' : 'ÉLIMINÉ'}
+                    </span>
+                  </div>
+                  <div className="mt-2 flex items-center justify-between gap-2">
+                    <span className="text-slate-600">Note Technique :</span>
+                    <input
+                      type="number"
+                      min={0}
+                      max={100}
+                      disabled={!b.adminCompliant}
+                      value={b.techScore}
+                      onChange={(e) => {
+                        const val = Number(e.target.value);
+                        setBids((prev) =>
+                          prev.map((row) =>
+                            row.bidId === b.bidId ? { ...row, techScore: val } : row
+                          )
+                        );
+                      }}
+                      className="w-20 rounded border px-2 py-1 text-right disabled:bg-slate-100"
+                    />
+                  </div>
+                  <div className="mt-2 flex items-center justify-between gap-2 border-t border-slate-200 pt-2">
+                    <span className="font-mono text-slate-800">
+                      {techValidated
+                        ? `${b.financialTtc.toLocaleString('fr-FR')} FCFA`
+                        : 'Enveloppe isolée (RLS)'}
+                    </span>
+                    {techValidated && oabInfo?.isOabSuspected && (
+                      <span className="inline-flex items-center gap-1 rounded bg-rose-100 px-2 py-0.5 text-[10px] font-bold text-rose-800">
+                        <ShieldAlert className="h-3 w-3" />
+                        OAB ({oabInfo.deviationPct}%)
+                      </span>
+                    )}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+
+          {/* Vue Desktop (>= 640px) */}
+          <div className="mt-4 hidden overflow-x-auto sm:block">
             <table className="w-full text-left text-xs">
               <thead className="border-b border-slate-200 text-slate-500">
                 <tr>

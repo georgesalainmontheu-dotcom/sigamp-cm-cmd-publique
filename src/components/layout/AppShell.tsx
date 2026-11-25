@@ -4,14 +4,26 @@ import {
   AlertTriangle,
   Building2,
   CloudOff,
+  LogOut,
   RefreshCw,
   Search,
   Shield,
+  Trash2,
   Wifi,
   WifiOff,
 } from 'lucide-react';
+import { useRouter } from 'next/navigation';
 import { useEffect, useState, type ReactNode } from 'react';
-import { useOfflineSyncStatus } from '../../lib/offline/offlineStore';
+import {
+  pruneClosedRecordsFromLocalCache,
+  useOfflineSyncStatus,
+} from '../../lib/offline/offlineStore';
+import {
+  getSupabaseBrowserClient,
+  isDemoRoleSwitcherEnabled,
+  loadAuthenticatedUserProfiles,
+  setAuthSessionCookie,
+} from '../../lib/supabase/client';
 import {
   ROLE_PROFILES,
   type ActiveRoleProfile,
@@ -30,11 +42,59 @@ interface AppShellProps {
 }
 
 export function AppShell({ activeSpace, onSelectSpace, children }: AppShellProps) {
+  const router = useRouter();
   const [aiOpen, setAiOpen] = useState(false);
   const sync = useOfflineSyncStatus();
+  const demoMode = isDemoRoleSwitcherEnabled();
 
+  const [authLoading, setAuthLoading] = useState(!demoMode);
+  const [realProfiles, setRealProfiles] = useState<ActiveRoleProfile[]>([]);
+  const [authEmail, setAuthEmail] = useState<string | null>(null);
+  const [pruneMessage, setPruneMessage] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (demoMode) return;
+    let cancelled = false;
+
+    const initAuth = async () => {
+      const supabase = getSupabaseBrowserClient();
+      if (!supabase) {
+        router.replace('/login');
+        return;
+      }
+
+      const loaded = await loadAuthenticatedUserProfiles(supabase);
+      if (cancelled) return;
+
+      if (!loaded) {
+        setAuthSessionCookie(null);
+        router.replace('/login');
+        return;
+      }
+
+      setAuthSessionCookie(loaded.accessToken);
+      setAuthEmail(loaded.email);
+      setRealProfiles(loaded.profiles);
+      if (loaded.profiles.length > 0) {
+        const hasCurrent = loaded.profiles.some((p) => p.spaceId === activeSpace);
+        if (!hasCurrent) {
+          onSelectSpace(loaded.profiles[0]!.spaceId);
+        }
+      }
+      setAuthLoading(false);
+    };
+
+    void initAuth();
+    return () => {
+      cancelled = true;
+    };
+  }, [demoMode, router, activeSpace, onSelectSpace]);
+
+  const availableProfiles = demoMode ? ROLE_PROFILES : realProfiles;
   const activeProfile =
-    ROLE_PROFILES.find((p) => p.spaceId === activeSpace) ?? ROLE_PROFILES[0]!;
+    availableProfiles.find((p) => p.spaceId === activeSpace) ??
+    availableProfiles[0] ??
+    ROLE_PROFILES[0]!;
 
   useEffect(() => {
     const onKeyDown = (e: KeyboardEvent) => {
@@ -46,6 +106,54 @@ export function AppShell({ activeSpace, onSelectSpace, children }: AppShellProps
     window.addEventListener('keydown', onKeyDown);
     return () => window.removeEventListener('keydown', onKeyDown);
   }, []);
+
+  const handleSignOut = async () => {
+    const supabase = getSupabaseBrowserClient();
+    if (supabase) {
+      await supabase.auth.signOut();
+    }
+    setAuthSessionCookie(null);
+    router.replace('/login');
+  };
+
+  const handlePruneCache = async () => {
+    const result = await pruneClosedRecordsFromLocalCache(undefined, 30);
+    setPruneMessage(
+      `Cache purgé : ${result.prunedCount} clos supprimés (${result.skippedPendingCount} en attente préservés).`
+    );
+  };
+
+  if (authLoading) {
+    return (
+      <div className="flex min-h-screen items-center justify-center bg-gov-slate text-sm text-gov-navy">
+        Vérification de la session Supabase Auth & des habilitations RBAC...
+      </div>
+    );
+  }
+
+  if (!demoMode && availableProfiles.length === 0) {
+    return (
+      <div className="flex min-h-screen flex-col items-center justify-center bg-gov-slate px-4 text-center">
+        <div className="max-w-md rounded-2xl border border-rose-200 bg-white p-6 shadow-md">
+          <h1 className="text-base font-bold text-rose-800">
+            Aucune affectation active (entity_memberships)
+          </h1>
+          <p className="mt-2 text-xs text-slate-600">
+            Le compte <strong>{authEmail ?? 'connecté'}</strong> ne possède aucun
+            rôle actif sur une entité publique. Contactez votre administrateur SIGAMP.
+          </p>
+          <button
+            type="button"
+            onClick={() => void handleSignOut()}
+            className="mt-4 inline-flex items-center gap-2 rounded-xl bg-gov-navy px-4 py-2 text-xs font-semibold text-white"
+          >
+            <LogOut className="h-3.5 w-3.5" />
+            Se déconnecter
+          </button>
+        </div>
+      </div>
+    );
+  }
 
   const totalPending = sync.pendingMutationsCount + sync.pendingAttachmentsCount;
 
@@ -59,13 +167,18 @@ export function AppShell({ activeSpace, onSelectSpace, children }: AppShellProps
               <Building2 className="h-5 w-5 text-gov-gold" />
             </div>
             <div>
-              <div className="flex items-center gap-2">
+              <div className="flex flex-wrap items-center gap-2">
                 <span className="text-sm font-bold tracking-wide text-white">
                   SIGAMP-CM
                 </span>
                 <span className="rounded bg-gov-gold/20 px-1.5 py-0.5 text-[10px] font-semibold text-gov-gold">
-                  CMP 2018/366 · PWA Local-First
+                  CMP 2018/366 · V1.1 Sécurisée
                 </span>
+                {demoMode && (
+                  <span className="rounded bg-amber-400/20 px-1.5 py-0.5 text-[10px] font-semibold text-amber-200">
+                    MODE DÉMO
+                  </span>
+                )}
               </div>
               <p className="text-xs text-slate-300">
                 {activeProfile.entityName} ({activeProfile.entityCode}) — Exercice{' '}
@@ -74,22 +187,22 @@ export function AppShell({ activeSpace, onSelectSpace, children }: AppShellProps
             </div>
           </div>
 
-          <div className="flex flex-wrap items-center gap-2.5">
+          <div className="flex flex-wrap items-center gap-2">
             {/* Bouton Copilote IA Ctrl+K */}
             <button
               type="button"
               onClick={() => setAiOpen(true)}
-              className="inline-flex items-center gap-2 rounded-xl border border-white/20 bg-white/10 px-3.5 py-2 text-xs font-medium text-white transition hover:bg-white/20"
+              className="inline-flex items-center gap-2 rounded-xl border border-white/20 bg-white/10 px-3 py-2 text-xs font-medium text-white transition hover:bg-white/20"
             >
               <Search className="h-3.5 w-3.5 text-gov-gold" />
-              <span>Copilote IA / Dictée</span>
+              <span>Copilote IA</span>
               <kbd className="hidden rounded bg-black/30 px-1.5 py-0.5 text-[10px] text-slate-200 sm:inline">
                 Ctrl+K
               </kbd>
             </button>
 
             {/* Indicateur Temps Réel Etat Réseau & Sync */}
-            <div className="flex items-center gap-1.5 rounded-xl border border-white/15 bg-black/20 px-3 py-1.5 text-xs">
+            <div className="flex flex-wrap items-center gap-1.5 rounded-xl border border-white/15 bg-black/20 px-2.5 py-1.5 text-xs">
               {sync.isOnline ? (
                 <Wifi className="h-3.5 w-3.5 text-emerald-400" />
               ) : (
@@ -131,8 +244,16 @@ export function AppShell({ activeSpace, onSelectSpace, children }: AppShellProps
               </button>
               <button
                 type="button"
+                onClick={() => void handlePruneCache()}
+                className="rounded p-1 text-slate-300 hover:bg-white/10 hover:text-white"
+                title="Purger les dossiers clos synchronisés > 30 jours du cache local"
+              >
+                <Trash2 className="h-3.5 w-3.5" />
+              </button>
+              <button
+                type="button"
                 onClick={sync.toggleSimulatedOffline}
-                className={`ml-1 rounded px-1.5 py-0.5 text-[10px] font-medium transition ${
+                className={`rounded px-1.5 py-0.5 text-[10px] font-medium transition ${
                   sync.simulatedOffline
                     ? 'bg-amber-400 text-slate-950'
                     : 'bg-white/10 text-slate-200 hover:bg-white/20'
@@ -140,24 +261,36 @@ export function AppShell({ activeSpace, onSelectSpace, children }: AppShellProps
                 title="Simuler un travail terrain sans connexion Internet"
               >
                 <CloudOff className="mr-1 inline h-3 w-3" />
-                {sync.simulatedOffline ? 'Mode Terrain ON' : 'Simuler Offline'}
+                {sync.simulatedOffline ? 'Terrain ON' : 'Simuler Offline'}
               </button>
             </div>
+
+            {!demoMode && (
+              <button
+                type="button"
+                onClick={() => void handleSignOut()}
+                className="inline-flex items-center gap-1.5 rounded-xl border border-white/20 bg-white/10 px-2.5 py-2 text-xs font-medium text-white hover:bg-white/20"
+                title="Se déconnecter"
+              >
+                <LogOut className="h-3.5 w-3.5" />
+                <span className="hidden sm:inline">Déconnexion</span>
+              </button>
+            )}
           </div>
         </div>
 
-        {/* Sélecteur d'Espace RBAC */}
+        {/* Sélecteur d'Espace RBAC (complet en démo, restreint aux habilitations réelles en prod) */}
         <div className="border-t border-white/10 bg-gov-navyLight/60">
           <div className="mx-auto flex max-w-7xl items-center gap-1.5 overflow-x-auto px-4 py-2 sm:px-6">
             <span className="mr-2 hidden items-center gap-1 text-[11px] font-semibold uppercase tracking-wider text-gov-gold lg:inline-flex">
               <Shield className="h-3.5 w-3.5" />
-              Espace RBAC :
+              {demoMode ? 'Espace RBAC (Démo) :' : 'Vos habilitations :'}
             </span>
-            {ROLE_PROFILES.map((p) => {
-              const active = p.spaceId === activeSpace;
+            {availableProfiles.map((p) => {
+              const active = p.spaceId === activeProfile.spaceId;
               return (
                 <button
-                  key={p.spaceId}
+                  key={`${p.spaceId}-${p.roleCode}`}
                   type="button"
                   onClick={() => onSelectSpace(p.spaceId)}
                   className={`shrink-0 rounded-lg px-3 py-1.5 text-xs font-medium transition ${
@@ -185,7 +318,11 @@ export function AppShell({ activeSpace, onSelectSpace, children }: AppShellProps
             </span>
           </div>
           <div className="text-[11px] text-slate-500">
-            {activeProfile.description}
+            {pruneMessage ? (
+              <span className="font-medium text-emerald-700">{pruneMessage}</span>
+            ) : (
+              activeProfile.description
+            )}
             {sync.lastSyncedAt && (
               <span className="ml-2 text-emerald-700">
                 · Dernière synchro : {new Date(sync.lastSyncedAt).toLocaleTimeString('fr-FR')}
@@ -204,11 +341,12 @@ export function AppShell({ activeSpace, onSelectSpace, children }: AppShellProps
         })}
       </main>
 
+      {/* Barre de Commande IA Ctrl+K */}
       <GlobalAiCommandBar
-        profile={activeProfile}
-        isOnline={sync.isOnline}
         isOpen={aiOpen}
         onClose={() => setAiOpen(false)}
+        profile={activeProfile}
+        isOnline={sync.isOnline}
       />
     </div>
   );

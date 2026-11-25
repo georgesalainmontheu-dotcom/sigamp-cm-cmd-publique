@@ -1,8 +1,16 @@
 'use client';
 
-import { Calculator, CheckCircle2, Landmark, Printer, ShieldCheck } from 'lucide-react';
+import {
+  Calculator,
+  CheckCircle2,
+  Landmark,
+  Printer,
+  ShieldAlert,
+  ShieldCheck,
+} from 'lucide-react';
 import { useMemo, useState } from 'react';
 import { calculateDecompte } from '../../lib/domain/billingEngine';
+import { evaluateSecuritiesExpiry } from '../../lib/domain/exceptionsEngine';
 import {
   generateOfficialPdf,
   type GeneratedOfficialPdfResult,
@@ -153,8 +161,57 @@ export function FinanceControllerWorkspace({ profile }: { profile: ActiveRolePro
     setPdfResult(pdf);
   };
 
+  const securitiesAlert = useMemo(() => {
+    const now = new Date();
+    const dayShift = (d: number) =>
+      new Date(now.getTime() + d * 86_400_000).toISOString().slice(0, 10);
+    return evaluateSecuritiesExpiry(
+      [
+        {
+          id: 'fin-sec-1',
+          contractOrBidRef: 'ENG-2026-018',
+          supplierName: 'ETS KEMGANG BTP SARL',
+          securityType: 'CAUTION_BONNE_EXECUTION',
+          issuerInstitution: 'Afriland First Bank',
+          referenceNumber: 'AFB-CBE-2026-881',
+          amountFcfa: 6_200_000,
+          expiryDateIso: dayShift(4),
+          ohadaFirstDemand: true,
+        },
+        {
+          id: 'fin-sec-2',
+          contractOrBidRef: 'LC-2026-011/CB',
+          supplierName: 'CAMEROUN SOLAIRE SA',
+          securityType: 'ASSURANCE_TRC_RC',
+          issuerInstitution: 'AXA Cameroun',
+          referenceNumber: 'AXA-TRC-2026-309',
+          amountFcfa: 28_000_000,
+          expiryDateIso: dayShift(-1),
+        },
+      ],
+      now
+    );
+  }, []);
+
   return (
     <div className="space-y-6">
+      {securitiesAlert.alerts.length > 0 && (
+        <div className="rounded-2xl border border-amber-300 bg-amber-50 p-4 text-xs text-amber-950 shadow-sm">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <span className="flex items-center gap-1.5 font-bold">
+              <ShieldAlert className="h-4 w-4 text-rose-600" />
+              Contrôle Préalable Cautions OHADA &amp; Assurances avant Paiement
+            </span>
+            <span className="font-semibold">
+              {securitiesAlert.expiredCount} expirée(s) · {securitiesAlert.criticalCount} critique(s) (&le;7j)
+            </span>
+          </div>
+          <p className="mt-1 text-[11px] text-amber-900">
+            Montant exposé : {securitiesAlert.totalAtRiskAmountFcfa.toLocaleString('fr-FR')} FCFA — Vérifiez la prorogation des garanties avant apposition du visa financier.
+          </p>
+        </div>
+      )}
+
       {/* File de Visa Budgétaire Préalable */}
       <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
         <h2 className="flex items-center gap-2 text-sm font-bold text-gov-navy">

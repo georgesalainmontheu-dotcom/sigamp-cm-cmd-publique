@@ -3,6 +3,7 @@ import {
   generateAdministrativeCorrespondence,
   learnTemplateFromValidatedDocument,
 } from '../../../../lib/ai/correspondenceGenerator';
+import { guardAiApiRequest } from '../../../../lib/security/apiAuthAndRateLimit';
 import type {
   GenerateCorrespondenceInput,
   LearnTemplateInput,
@@ -10,7 +11,10 @@ import type {
 
 export const runtime = 'nodejs';
 
-export async function GET(): Promise<Response> {
+export async function GET(req: Request): Promise<Response> {
+  const guard = await guardAiApiRequest(req);
+  if (!guard.ok) return guard.response;
+
   return Response.json({
     status: 'ok',
     nationalTemplatesCount: DEFAULT_NATIONAL_TEMPLATES.length,
@@ -25,6 +29,9 @@ type CorrespondencePostBody =
   | ({ action: 'learn' } & LearnTemplateInput);
 
 export async function POST(req: Request): Promise<Response> {
+  const guard = await guardAiApiRequest(req);
+  if (!guard.ok) return guard.response;
+
   try {
     const body = (await req.json()) as CorrespondencePostBody;
 

@@ -69,6 +69,8 @@ export function checkDisputeAdmissibility(
     | 'filedAtIso'
     | 'referenceEventAtIso'
     | 'priorMoSeizureVerified'
+    | 'appealBondRequired'
+    | 'appealBondRef'
     | 'legalDeadlineBusinessDays'
     | 'extraHolidaysIso'
   >
@@ -79,7 +81,14 @@ export function checkDisputeAdmissibility(
     throw new Error('Dates de référence ou de dépôt du recours invalides.');
   }
 
-  const legalDays = input.legalDeadlineBusinessDays ?? 5;
+  const isPassationStage =
+    input.stage === 'PRE_OUVERTURE' ||
+    input.stage === 'OUVERTURE_PLIS' ||
+    input.stage === 'ATTRIBUTION';
+
+  // CMP Décret 2018/366 : 5 jours ouvrables en phase de passation ; 15 jours ouvrables par défaut en exécution/résiliation
+  const defaultStageDays = isPassationStage ? 5 : 15;
+  const legalDays = input.legalDeadlineBusinessDays ?? defaultStageDays;
   const holidays = new Set(input.extraHolidaysIso ?? []);
 
   const deadlineDay = addBusinessDaysCameroon(referenceDate, legalDays, holidays);
@@ -92,18 +101,30 @@ export function checkDisputeAdmissibility(
 
   const isWithinDeadline = filedDate.getTime() <= deadlineEnd.getTime();
   const isForeclosed = !isWithinDeadline;
-  const isAdmissible = isWithinDeadline && input.priorMoSeizureVerified;
+  const appealBondRequired = Boolean(input.appealBondRequired);
+  const appealBondRefClean = input.appealBondRef?.trim() || undefined;
+  const appealBondProvided = Boolean(appealBondRefClean);
 
-  const isPassationStage =
-    input.stage === 'PRE_OUVERTURE' ||
-    input.stage === 'OUVERTURE_PLIS' ||
-    input.stage === 'ATTRIBUTION';
+  const missingAdmissibilityElements: string[] = [];
+  if (!input.priorMoSeizureVerified) {
+    missingAdmissibilityElements.push('Preuve de saisine préalable du Maître d’Ouvrage');
+  }
+  if (appealBondRequired && !appealBondProvided) {
+    missingAdmissibilityElements.push('Référence du cautionnement de recours (consignation ARMP)');
+  }
+
+  const isAdmissible =
+    isWithinDeadline &&
+    input.priorMoSeizureVerified &&
+    (!appealBondRequired || appealBondProvided);
 
   // Trigger SQL : effet suspensif automatique dès lors que le recours en passation n'est pas forclos
   const suspensionActive = isPassationStage && !isForeclosed;
   const contractSignatureLocked = suspensionActive;
 
-  const admissibilityReasons: string[] = [];
+  const admissibilityReasons: string[] = [
+    `Phase procédurale contrôlée : ${input.stage} (${isPassationStage ? 'Passation — délai légal 5 jours ouvrables CMP' : 'Exécution / Résiliation'}).`,
+  ];
   if (isForeclosed) {
     admissibilityReasons.push(
       `FORCLUSION CONSTATÉE : Recours déposé après expiration du délai légal de ${legalDays} jours ouvrables (${businessDaysElapsed} jour(s) ouvrable(s) écoulé(s) ; date limite : ${deadlineDay
@@ -124,6 +145,18 @@ export function checkDisputeAdmissibility(
     );
   }
 
+  if (appealBondRequired) {
+    if (appealBondProvided) {
+      admissibilityReasons.push(
+        `Cautionnement de recours vérifié : réf. ${appealBondRefClean}.`
+      );
+    } else {
+      admissibilityReasons.push(
+        'IRRECEVABILITÉ FORMELLE POSSIBLE : Référence de cautionnement de recours exigée mais absente.'
+      );
+    }
+  }
+
   if (suspensionActive) {
     admissibilityReasons.push(
       'EFFET SUSPENSIF ACTIVÉ DE PLEIN DROIT : Signature du contrat verrouillée jusqu’à décision définitive (CMP).'
@@ -131,6 +164,7 @@ export function checkDisputeAdmissibility(
   }
 
   return {
+    stage: input.stage,
     referenceEventAtIso: referenceDate.toISOString(),
     filedAtIso: filedDate.toISOString(),
     legalDeadlineDateIso: deadlineEnd.toISOString(),
@@ -138,6 +172,10 @@ export function checkDisputeAdmissibility(
     legalDeadlineBusinessDays: legalDays,
     isWithinDeadline,
     priorMoSeizureVerified: input.priorMoSeizureVerified,
+    appealBondRequired,
+    appealBondProvided,
+    appealBondRef: appealBondRefClean,
+    missingAdmissibilityElements,
     isAdmissible,
     isForeclosed,
     suspensionActive,

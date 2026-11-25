@@ -2,6 +2,7 @@
 
 import {
   AlertOctagon,
+  AlertTriangle,
   CalendarClock,
   FileSignature,
   FileText,
@@ -9,12 +10,16 @@ import {
   Mail,
   Printer,
   Scale,
+  ShieldAlert,
   Users,
 } from 'lucide-react';
 import { useMemo, useState } from 'react';
+import { calculateAdjustedCompletionDate } from '../../lib/domain/billingEngine';
 import {
   evaluateAmendment,
   evaluateMiseEnDemeure,
+  evaluateSecuritiesExpiry,
+  type SecurityRecordInput,
 } from '../../lib/domain/exceptionsEngine';
 import {
   calculateIndemnityLiquidation,
@@ -26,7 +31,12 @@ import {
   routeProcurementProcedure,
 } from '../../lib/domain/procurementRouter';
 import { generateAdministrativeCorrespondence } from '../../lib/ai/correspondenceGenerator';
-import { getOfflineDb, saveOfflineRecord } from '../../lib/offline/offlineStore';
+import {
+  generateProvisionalChronoId,
+  getOfflineDb,
+  saveOfflineRecord,
+  saveOfflineRecordWithProvisionalChrono,
+} from '../../lib/offline/offlineStore';
 import {
   generateOfficialPdf,
   type GeneratedOfficialPdfResult,
@@ -220,11 +230,75 @@ export function SigampMoWorkspace({ profile }: { profile: ActiveRoleProfile }) {
     });
   }, [profile]);
 
+  const securitiesReport = useMemo(() => {
+    const today = new Date();
+    const addDays = (d: number) =>
+      new Date(today.getTime() + d * 86_400_000).toISOString().slice(0, 10);
+    const demoSecurities: SecurityRecordInput[] = [
+      {
+        id: 'sec-1',
+        contractOrBidRef: 'M-2026-004/CB',
+        supplierName: 'ETS KEMGANG BTP SARL',
+        securityType: 'CAUTION_BONNE_EXECUTION',
+        issuerInstitution: 'Afriland First Bank',
+        referenceNumber: 'AFB-CBE-2026-881',
+        amountFcfa: 6_200_000,
+        expiryDateIso: addDays(5),
+        ohadaFirstDemand: true,
+      },
+      {
+        id: 'sec-2',
+        contractOrBidRef: 'LC-2026-011/CB',
+        supplierName: 'CAMEROUN SOLAIRE SA',
+        securityType: 'ASSURANCE_TRC_RC',
+        issuerInstitution: 'AXA Cameroun',
+        referenceNumber: 'AXA-TRC-2026-309',
+        amountFcfa: 28_000_000,
+        expiryDateIso: addDays(-2),
+      },
+      {
+        id: 'sec-3',
+        contractOrBidRef: 'M-2026-009/CB',
+        supplierName: 'SOCOBA CAMEROUN SA',
+        securityType: 'CAUTION_AVANCE_DEMARRAGE',
+        issuerInstitution: 'BICEC',
+        referenceNumber: 'BICEC-CAD-2026-112',
+        amountFcfa: 18_500_000,
+        expiryDateIso: addDays(21),
+        ohadaFirstDemand: true,
+      },
+    ];
+    return evaluateSecuritiesExpiry(demoSecurities, today);
+  }, []);
+
+  const adjustedOsTimeline = useMemo(
+    () =>
+      calculateAdjustedCompletionDate({
+        startOrderDateIso: '2026-06-01',
+        initialDurationDays: 120,
+        amendmentDurationDeltaDays: 15,
+        serviceOrders: [
+          { osNumber: 'OS-ARR-01', osType: 'ARRET', effectiveDateIso: '2026-07-10' },
+          { osNumber: 'OS-REP-01', osType: 'REPRISE', effectiveDateIso: '2026-07-25' },
+          {
+            osNumber: 'OS-TECH-02',
+            osType: 'TECHNIQUE',
+            effectiveDateIso: '2026-08-15',
+            weatherExcusedDays: 7,
+          },
+        ],
+        evaluationDateIso: new Date().toISOString().slice(0, 10),
+      }),
+    []
+  );
+
   const handleCreateProjectOffline = async () => {
     if (!liveRouting) return;
+    const effectiveCode =
+      newCode.trim() || generateProvisionalChronoId('PROV');
     const item: ProjectItem = {
       id: `proj-${Date.now()}`,
-      code: newCode,
+      code: effectiveCode,
       title: newTitle,
       nature: newNature,
       amountTtc: newAmount,
@@ -236,17 +310,28 @@ export function SigampMoWorkspace({ profile }: { profile: ActiveRoleProfile }) {
     setProjects((prev) => [item, ...prev]);
     try {
       const db = getOfflineDb();
-      await saveOfflineRecord(db, 'projects', {
-        id: item.id,
-        entity_id: profile.entityId,
-        code: item.code,
-        title: item.title,
-        nature: item.nature,
-        estimated_amount_ttc: item.amountTtc,
-        procurement_mode: item.mode,
-      });
+      await saveOfflineRecordWithProvisionalChrono(
+        db,
+        'projects',
+        {
+          id: item.id,
+          entity_id: profile.entityId,
+          project_code: newCode.trim() || undefined,
+          code: item.code,
+          title: item.title,
+          nature: item.nature,
+          estimated_amount_ttc: item.amountTtc,
+          procurement_mode: item.mode,
+        },
+        {
+          chronoField: 'project_code',
+          docType: 'PROJ',
+          chronoPrefix: profile.entityCode,
+          fiscalYear: profile.fiscalYear,
+        }
+      );
       setOfflineNotice(
-        `Projet ${item.code} enregistré dans Dexie (Local-First) et ajouté à la file de synchronisation.`
+        `Projet ${item.code} enregistré dans Dexie (Local-First) et prêt pour allocation atomique à la synchronisation.`
       );
     } catch {
       setOfflineNotice(`Projet ${item.code} ajouté à la vue de session.`);
@@ -357,6 +442,64 @@ export function SigampMoWorkspace({ profile }: { profile: ActiveRoleProfile }) {
 
   return (
     <div className="space-y-6">
+      {/* Bandeau d'alerte Cautions OHADA & Assurances */}
+      {securitiesReport.alerts.length > 0 && (
+        <div className="rounded-2xl border border-rose-200 bg-rose-50/90 p-4 text-xs text-rose-950 shadow-sm">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <div className="flex items-center gap-2 font-bold text-rose-900">
+              <ShieldAlert className="h-4 w-4 text-rose-600" />
+              Surveillance Cautions OHADA &amp; Assurances ({securitiesReport.alerts.length} alerte(s))
+            </div>
+            <div className="flex flex-wrap gap-1.5 text-[11px] font-semibold">
+              {securitiesReport.expiredCount > 0 && (
+                <span className="rounded-full bg-rose-600 px-2.5 py-0.5 text-white">
+                  {securitiesReport.expiredCount} expirée(s)
+                </span>
+              )}
+              {securitiesReport.criticalCount > 0 && (
+                <span className="rounded-full bg-amber-500 px-2.5 py-0.5 text-slate-950">
+                  {securitiesReport.criticalCount} critique(s) &le; 7j
+                </span>
+              )}
+              {securitiesReport.warningCount > 0 && (
+                <span className="rounded-full bg-amber-100 px-2.5 py-0.5 text-amber-900">
+                  {securitiesReport.warningCount} à surveiller (8-30j)
+                </span>
+              )}
+            </div>
+          </div>
+          <div className="mt-2.5 grid gap-2 sm:grid-cols-3">
+            {securitiesReport.alerts.map((al) => (
+              <div
+                key={al.securityId}
+                className="rounded-xl border border-rose-200/80 bg-white/80 p-2.5"
+              >
+                <div className="flex items-center justify-between gap-1 font-semibold text-gov-navy">
+                  <span>{al.contractOrBidRef}</span>
+                  <span
+                    className={`rounded px-1.5 py-0.5 text-[10px] font-bold ${
+                      al.severity === 'EXPIRED'
+                        ? 'bg-rose-100 text-rose-800'
+                        : al.severity === 'CRITICAL'
+                          ? 'bg-amber-200 text-amber-950'
+                          : 'bg-amber-50 text-amber-800'
+                    }`}
+                  >
+                    {al.daysRemaining < 0 ? `Expirée (${al.daysRemaining}j)` : `J-${al.daysRemaining}`}
+                  </span>
+                </div>
+                <div className="mt-0.5 text-[11px] text-slate-600">
+                  {al.supplierName} · {al.issuerInstitution}
+                </div>
+                <div className="mt-1 font-mono text-[11px] font-semibold text-slate-800">
+                  {al.amountFcfa.toLocaleString('fr-FR')} FCFA
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
       {/* Navigation interne SIGAMP / MO */}
       <div className="flex flex-wrap gap-2">
         {[
@@ -486,7 +629,34 @@ export function SigampMoWorkspace({ profile }: { profile: ActiveRoleProfile }) {
                 Générer DAO PDF/QR
               </button>
             </div>
-            <div className="mt-4 overflow-x-auto">
+            {/* Vue Mobile (< 640px) : Cartes empilées */}
+            <div className="mt-4 space-y-3 sm:hidden">
+              {projects.map((p) => (
+                <div
+                  key={p.id}
+                  className="rounded-xl border border-slate-200 bg-slate-50/70 p-3.5 text-xs"
+                >
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="font-mono font-bold text-gov-navy">{p.code}</span>
+                    <span className="rounded-full bg-emerald-100 px-2.5 py-0.5 text-[11px] font-semibold text-emerald-800">
+                      {p.status}
+                    </span>
+                  </div>
+                  <p className="mt-1.5 font-medium text-slate-800">{p.title}</p>
+                  <div className="mt-2 flex flex-wrap items-center justify-between gap-2 border-t border-slate-200 pt-2">
+                    <span className="rounded bg-white px-2 py-0.5 font-medium text-slate-700">
+                      {p.contractType} ({p.mode})
+                    </span>
+                    <span className="font-bold text-gov-navy">
+                      {p.amountTtc.toLocaleString('fr-FR')} FCFA
+                    </span>
+                  </div>
+                </div>
+              ))}
+            </div>
+
+            {/* Vue Desktop (>= 640px) */}
+            <div className="mt-4 hidden overflow-x-auto sm:block">
               <table className="w-full text-left text-xs">
                 <thead className="border-b border-slate-200 text-slate-500">
                   <tr>
@@ -704,6 +874,22 @@ export function SigampMoWorkspace({ profile }: { profile: ActiveRoleProfile }) {
                 </div>
               </div>
             )}
+
+            <div className="rounded-xl border border-blue-200 bg-blue-50/70 p-3.5 space-y-1">
+              <div className="flex items-center gap-1.5 font-bold text-gov-navy">
+                <AlertTriangle className="h-3.5 w-3.5 text-blue-700" />
+                Ajustement Délai Contractuel par OS (ARRET / REPRISE / Intempéries)
+              </div>
+              <div className="text-slate-700">
+                Fin initiale : <strong>{adjustedOsTimeline.initialCompletionDateIso}</strong> &rarr;{' '}
+                Fin révisée : <strong>{adjustedOsTimeline.revisedCompletionDateIso}</strong>
+              </div>
+              <div className="text-[11px] text-slate-600">
+                Avenants : +{adjustedOsTimeline.amendmentDurationDeltaDays}j · Suspensions ARRET/REPRISE :{' '}
+                +{adjustedOsTimeline.suspendedDays}j · Intempéries : +{adjustedOsTimeline.weatherExcusedDays}j ·
+                Retard réel exigible : <strong>{adjustedOsTimeline.actualDelayDays}j</strong>
+              </div>
+            </div>
           </div>
         </div>
       )}
@@ -797,7 +983,41 @@ export function SigampMoWorkspace({ profile }: { profile: ActiveRoleProfile }) {
             </button>
           </div>
 
-          <div className="overflow-x-auto">
+          {/* Vue Mobile (< 640px) : Cartes empilées */}
+          <div className="space-y-3 sm:hidden">
+            {demoIndemnityState.items.map((it) => (
+              <div
+                key={it.attendanceId}
+                className="rounded-xl border border-slate-200 bg-slate-50/70 p-3.5 text-xs"
+              >
+                <div className="flex items-center justify-between gap-2">
+                  <span className="font-semibold text-gov-navy">{it.beneficiaryName}</span>
+                  <span className="rounded bg-white px-2 py-0.5 text-[10px] font-bold text-slate-700">
+                    {it.roleCode}
+                  </span>
+                </div>
+                <div className="mt-2 grid grid-cols-3 gap-2 border-t border-slate-200 pt-2 text-[11px]">
+                  <div>
+                    <span className="block text-slate-500">Brut</span>
+                    <strong>{it.grossAmountFcfa.toLocaleString('fr-FR')}</strong>
+                  </div>
+                  <div>
+                    <span className="block text-slate-500">IR</span>
+                    <strong>{it.withholdingFcfa.toLocaleString('fr-FR')}</strong>
+                  </div>
+                  <div>
+                    <span className="block text-slate-500">Net</span>
+                    <strong className="text-gov-emerald">
+                      {it.netAmountFcfa.toLocaleString('fr-FR')}
+                    </strong>
+                  </div>
+                </div>
+              </div>
+            ))}
+          </div>
+
+          {/* Vue Desktop (>= 640px) */}
+          <div className="hidden overflow-x-auto sm:block">
             <table className="w-full text-left text-xs">
               <thead className="border-b border-slate-200 text-slate-500">
                 <tr>

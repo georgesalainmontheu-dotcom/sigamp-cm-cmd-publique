@@ -29,13 +29,56 @@ export type OfflineEntityTable =
 
 export type MutationOperation = 'INSERT' | 'UPDATE' | 'DELETE';
 export type MutationStatus = 'PENDING' | 'SYNCING' | 'CONFLICT' | 'FAILED';
+export type LocalRecordSyncStatus = 'PENDING' | 'SYNCED' | 'CONFLICT';
+
+export const CLOSED_RECORD_STATUSES = new Set<string>([
+  'CLOTURE',
+  'RESILIE',
+  'ARCHIVE',
+  'ANNULE',
+  'INFRUCTUEUX',
+  'PAYE',
+  'REJETE',
+  'ANNULE_ATTRIBUTION',
+]);
 
 export interface OfflineRecordBase {
   id: string;
   entity_id?: string;
   sync_version?: number;
+  syncStatus?: LocalRecordSyncStatus;
+  status?: string;
+  is_closed?: boolean;
+  closed_at?: string;
+  provisional_chrono_field?: string;
+  chrono_doc_type?: string;
+  chrono_prefix?: string;
+  fiscal_year?: number;
   updated_at?: string;
   [key: string]: unknown;
+}
+
+/**
+ * Génère un identifiant provisoire offline sans risque de collision :
+ * Format : PROV-<timestamp>-<shortId>
+ */
+export function generateProvisionalChronoId(
+  prefix = 'PROV',
+  now: Date = new Date()
+): string {
+  const pad = (n: number, len = 2) => String(n).padStart(len, '0');
+  const ts = `${now.getUTCFullYear()}${pad(now.getUTCMonth() + 1)}${pad(
+    now.getUTCDate()
+  )}${pad(now.getUTCHours())}${pad(now.getUTCMinutes())}${pad(now.getUTCSeconds())}`;
+  const rand =
+    typeof globalThis.crypto?.randomUUID === 'function'
+      ? globalThis.crypto.randomUUID().replace(/-/g, '').slice(0, 6).toUpperCase()
+      : Math.random().toString(36).slice(2, 8).toUpperCase().padEnd(6, '0');
+  return `${prefix}-${ts}-${rand}`;
+}
+
+export function isProvisionalChronoId(value: unknown): value is string {
+  return typeof value === 'string' && /^PROV-\d{8,14}-[A-Z0-9]{4,8}$/i.test(value.trim());
 }
 
 export interface OfflineMutationItem {
@@ -285,12 +328,13 @@ export async function saveOfflineRecord<T extends OfflineRecordBase>(
   tableName: OfflineEntityTable,
   record: T,
   operation: MutationOperation = 'INSERT'
-): Promise<T & { sync_version: number; updated_at: string }> {
+): Promise<T & { sync_version: number; syncStatus: LocalRecordSyncStatus; updated_at: string }> {
   const nowIso = new Date().toISOString();
   const nextSyncVersion = (record.sync_version ?? 0) + 1;
   const enriched = {
     ...record,
     sync_version: nextSyncVersion,
+    syncStatus: 'PENDING' as const,
     updated_at: nowIso,
   };
 
@@ -316,6 +360,36 @@ export async function saveOfflineRecord<T extends OfflineRecordBase>(
 
   await notifyStatusListeners(db);
   return enriched;
+}
+
+export async function saveOfflineRecordWithProvisionalChrono<T extends OfflineRecordBase>(
+  db: CommandePubliqueOfflineDB,
+  tableName: OfflineEntityTable,
+  record: T,
+  options: {
+    chronoField: string;
+    docType: string;
+    chronoPrefix?: string;
+    fiscalYear?: number;
+  },
+  operation: MutationOperation = 'INSERT'
+): Promise<T & Record<string, unknown> & { sync_version: number; syncStatus: LocalRecordSyncStatus; updated_at: string }> {
+  const currentVal = record[options.chronoField];
+  const assignedChrono =
+    typeof currentVal === 'string' && currentVal.trim().length > 0
+      ? currentVal
+      : generateProvisionalChronoId('PROV');
+
+  const prepared = {
+    ...record,
+    [options.chronoField]: assignedChrono,
+    provisional_chrono_field: options.chronoField,
+    chrono_doc_type: options.docType,
+    chrono_prefix: options.chronoPrefix,
+    fiscal_year: options.fiscalYear ?? new Date().getUTCFullYear(),
+  };
+
+  return saveOfflineRecord(db, tableName, prepared, operation);
 }
 
 export async function queueScannedAttachment(
@@ -348,6 +422,12 @@ export interface RemoteSyncTransport {
     tableName: OfflineEntityTable,
     sinceIso: string | null
   ): Promise<OfflineRecordBase[]>;
+  allocateChronoNumber?(params: {
+    entityId: string;
+    fiscalYear: number;
+    docType: string;
+    prefix?: string;
+  }): Promise<string>;
 }
 
 export function createSupabaseBrowserClient(): SupabaseClient | null {
@@ -450,6 +530,21 @@ export function createSupabaseSyncTransport(client: SupabaseClient): RemoteSyncT
       if (error || !data) return [];
       return data as OfflineRecordBase[];
     },
+
+    async allocateChronoNumber(params) {
+      const { data, error } = await client.rpc('allocate_next_chrono_number', {
+        p_entity_id: params.entityId,
+        p_fiscal_year: params.fiscalYear,
+        p_doc_type: params.docType,
+        p_prefix: params.prefix ?? null,
+      });
+      if (error || typeof data !== 'string') {
+        throw new Error(
+          error?.message ?? 'Échec d’allocation du numéro chronologique atomique Supabase.'
+        );
+      }
+      return data;
+    },
   };
 }
 
@@ -519,10 +614,72 @@ export async function bidirectionalSyncWithSupabase(
     if (mut.id === undefined) continue;
     await db.mutationQueue.update(mut.id, { status: 'SYNCING' });
 
-    const pushRes = await transport.pushMutation(mut);
+    // Résolution des IDs chronologiques provisoires (PROV-...) en numéro atomique officiel lors du sync
+    let mutationToPush = mut;
+    const chronoField =
+      typeof mut.payload.provisional_chrono_field === 'string'
+        ? mut.payload.provisional_chrono_field
+        : ['chrono_number', 'project_code', 'dispute_number', 'os_number', 'reference_code'].find(
+            (f) => isProvisionalChronoId(mut.payload[f])
+          );
+
+    if (
+      chronoField &&
+      isProvisionalChronoId(mut.payload[chronoField]) &&
+      transport.allocateChronoNumber &&
+      typeof mut.payload.entity_id === 'string'
+    ) {
+      try {
+        const officialChrono = await transport.allocateChronoNumber({
+          entityId: mut.payload.entity_id,
+          fiscalYear:
+            typeof mut.payload.fiscal_year === 'number'
+              ? mut.payload.fiscal_year
+              : new Date().getUTCFullYear(),
+          docType:
+            typeof mut.payload.chrono_doc_type === 'string'
+              ? mut.payload.chrono_doc_type
+              : mut.tableName.toUpperCase(),
+          prefix:
+            typeof mut.payload.chrono_prefix === 'string'
+              ? mut.payload.chrono_prefix
+              : undefined,
+        });
+        const updatedPayload: Record<string, unknown> = {
+          ...mut.payload,
+          [chronoField]: officialChrono,
+          provisional_chrono_replaced: mut.payload[chronoField],
+        };
+        mutationToPush = { ...mut, payload: updatedPayload };
+        await db.mutationQueue.update(mut.id, { payload: updatedPayload });
+        await db.getEntityTable(mut.tableName).put({
+          ...(updatedPayload as OfflineRecordBase),
+          id: mut.recordId,
+        });
+      } catch (allocErr) {
+        errors.push(
+          allocErr instanceof Error
+            ? allocErr.message
+            : 'Erreur allocation chrono atomique.'
+        );
+      }
+    }
+
+    const pushRes = await transport.pushMutation(mutationToPush);
     if (pushRes.ok) {
       if (pushRes.serverRecord) {
-        await db.getEntityTable(mut.tableName).put(pushRes.serverRecord);
+        await db.getEntityTable(mut.tableName).put({
+          ...pushRes.serverRecord,
+          syncStatus: 'SYNCED',
+        });
+      } else if (mut.operation !== 'DELETE') {
+        const currentLocal = await db.getEntityTable(mut.tableName).get(mut.recordId);
+        if (currentLocal) {
+          await db.getEntityTable(mut.tableName).put({
+            ...currentLocal,
+            syncStatus: 'SYNCED',
+          });
+        }
       }
       await db.mutationQueue.delete(mut.id);
       pushedCount += 1;
@@ -533,6 +690,13 @@ export async function bidirectionalSyncWithSupabase(
         lastError: pushRes.errorMessage,
         updatedAt: new Date().toISOString(),
       });
+      const currentLocal = await db.getEntityTable(mut.tableName).get(mut.recordId);
+      if (currentLocal) {
+        await db.getEntityTable(mut.tableName).put({
+          ...currentLocal,
+          syncStatus: 'CONFLICT',
+        });
+      }
       errors.push(pushRes.errorMessage ?? 'Conflit de synchronisation.');
     } else {
       await db.mutationQueue.update(mut.id, {
@@ -562,7 +726,10 @@ export async function bidirectionalSyncWithSupabase(
       let maxUpdatedAt = meta?.lastPulledAt ?? '';
       for (const row of remoteRows) {
         if (!protectedKeys.has(`${tableName}:${row.id}`)) {
-          await table.put(row);
+          await table.put({
+            ...row,
+            syncStatus: 'SYNCED',
+          });
           pulledCount += 1;
         }
         if (row.updated_at && row.updated_at > maxUpdatedAt) {
@@ -743,3 +910,104 @@ export function useOfflineSyncStatus(): SyncStatusSnapshot & {
     toggleSimulatedOffline,
   };
 }
+
+// ============================================================================
+// PURGE AUTOMATIQUE DES DOSSIERS CLOS SYNCHRONISES (> 30 JOURS)
+// ============================================================================
+
+export interface PruneLocalCacheReport {
+  retentionDays: number;
+  cutoffIso: string;
+  prunedCount: number;
+  skippedPendingCount: number;
+  prunedByTable: Partial<Record<OfflineEntityTable, number>>;
+}
+
+function isClosedOfflineRecord(record: OfflineRecordBase): boolean {
+  if (record.is_closed === true || Boolean(record.closed_at)) {
+    return true;
+  }
+  const statusVal =
+    typeof record.status === 'string'
+      ? record.status.toUpperCase()
+      : typeof record.current_status === 'string'
+        ? record.current_status.toUpperCase()
+        : '';
+  return CLOSED_RECORD_STATUSES.has(statusVal);
+}
+
+/**
+ * Supprime d'IndexedDB uniquement les enregistrements clos/archivés déjà
+ * synchronisés (`syncStatus === 'SYNCED'`) dont la clôture/mise à jour dépasse
+ * `retentionDays` jours (défaut 30).
+ * Ne supprime JAMAIS un enregistrement ayant une mutation `PENDING` ou `CONFLICT`.
+ */
+export async function pruneClosedRecordsFromLocalCache(
+  db?: CommandePubliqueOfflineDB,
+  retentionDays = 30,
+  referenceDate: Date = new Date()
+): Promise<PruneLocalCacheReport> {
+  const targetDb = db ?? getOfflineDb();
+  const cutoffMs = referenceDate.getTime() - retentionDays * 24 * 60 * 60 * 1000;
+  const cutoffIso = new Date(cutoffMs).toISOString();
+
+  const queueItems = await targetDb.mutationQueue.toArray();
+  const protectedKeys = new Set(
+    queueItems
+      .filter((q) => q.status === 'PENDING' || q.status === 'SYNCING' || q.status === 'CONFLICT' || q.status === 'FAILED')
+      .map((q) => `${q.tableName}:${q.recordId}`)
+  );
+
+  let prunedCount = 0;
+  let skippedPendingCount = 0;
+  const prunedByTable: Partial<Record<OfflineEntityTable, number>> = {};
+
+  for (const tableName of SYNCABLE_TABLES) {
+    const table = targetDb.getEntityTable(tableName);
+    const rows = await table.toArray();
+    const idsToDelete: string[] = [];
+
+    for (const row of rows) {
+      if (!isClosedOfflineRecord(row)) continue;
+
+      const dateStr =
+        (typeof row.closed_at === 'string' && row.closed_at) ||
+        (typeof row.updated_at === 'string' && row.updated_at) ||
+        '';
+      if (!dateStr) continue;
+
+      const recordTime = new Date(dateStr).getTime();
+      if (Number.isNaN(recordTime) || recordTime >= cutoffMs) continue;
+
+      const isProtected =
+        protectedKeys.has(`${tableName}:${row.id}`) ||
+        row.syncStatus === 'PENDING' ||
+        row.syncStatus === 'CONFLICT' ||
+        row.syncStatus !== 'SYNCED';
+
+      if (isProtected) {
+        skippedPendingCount += 1;
+        continue;
+      }
+
+      idsToDelete.push(row.id);
+    }
+
+    if (idsToDelete.length > 0) {
+      await table.bulkDelete(idsToDelete);
+      prunedCount += idsToDelete.length;
+      prunedByTable[tableName] = idsToDelete.length;
+    }
+  }
+
+  await notifyStatusListeners(targetDb);
+
+  return {
+    retentionDays,
+    cutoffIso,
+    prunedCount,
+    skippedPendingCount,
+    prunedByTable,
+  };
+}
+

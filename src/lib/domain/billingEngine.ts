@@ -310,3 +310,168 @@ export function detectAbnormalLowBids(
     flaggedCount: analyses.filter((a) => a.isOabSuspected).length,
   };
 }
+
+// ============================================================================
+// CALCUL DE DATE CONTRACTUELLE AJUSTEE PAR ORDRES DE SERVICE (ARRET / REPRISE)
+// ============================================================================
+
+export interface ServiceOrderTimelineEvent {
+  osNumber: string;
+  osType: 'DEMARRAGE' | 'ARRET' | 'REPRISE' | 'TECHNIQUE' | 'MISE_EN_DEMEURE' | 'NOTIFICATION_AVENANT';
+  effectiveDateIso: string;
+  weatherExcusedDays?: number;
+}
+
+export interface AdjustedCompletionInput {
+  /** Date de notification de l'Ordre de Service de Démarrage */
+  startOrderDateIso: string;
+  /** Durée contractuelle initiale en jours calendaires */
+  initialDurationDays: number;
+  /** Cumul des prolongations accordées par avenants */
+  amendmentDurationDeltaDays?: number;
+  /** Historique des Ordres de Service (ARRET, REPRISE, TECHNIQUE avec jours d'intempéries) */
+  serviceOrders?: ServiceOrderTimelineEvent[];
+  /** Date d'évaluation / constatation (par défaut aujourd'hui) */
+  evaluationDateIso?: string;
+}
+
+export interface SuspensionInterval {
+  arretOsNumber: string;
+  arretDateIso: string;
+  repriseOsNumber: string | null;
+  repriseDateIso: string;
+  suspendedDays: number;
+  openEnded: boolean;
+}
+
+export interface AdjustedCompletionResult {
+  startDateIso: string;
+  initialCompletionDateIso: string;
+  revisedCompletionDateIso: string;
+  evaluationDateIso: string;
+  initialDurationDays: number;
+  amendmentDurationDeltaDays: number;
+  suspendedDays: number;
+  weatherExcusedDays: number;
+  totalAdjustedDurationDays: number;
+  actualDelayDays: number;
+  isCurrentlySuspended: boolean;
+  suspensionIntervals: SuspensionInterval[];
+}
+
+function toUtcDay(dateIso: string): Date {
+  const parsed = new Date(dateIso);
+  if (Number.isNaN(parsed.getTime())) {
+    throw new Error(`Date ISO invalide pour le calcul des délais contractuels : ${dateIso}`);
+  }
+  return new Date(Date.UTC(parsed.getUTCFullYear(), parsed.getUTCMonth(), parsed.getUTCDate()));
+}
+
+function addDaysIso(date: Date, days: number): string {
+  const out = new Date(date.getTime());
+  out.setUTCDate(out.getUTCDate() + days);
+  return out.toISOString().slice(0, 10);
+}
+
+/**
+ * Calcule la date contractuelle révisée et le retard réel exigible à partir de :
+ * - OS de démarrage + durée initiale
+ * - Avenants de délai (`amendmentDurationDeltaDays`)
+ * - Paires d'OS d'arrêt / reprise (`ARRET` / `REPRISE`)
+ * - Jours d'intempéries excusés (`weatherExcusedDays`)
+ */
+export function calculateAdjustedCompletionDate(
+  input: AdjustedCompletionInput
+): AdjustedCompletionResult {
+  if (!Number.isFinite(input.initialDurationDays) || input.initialDurationDays <= 0) {
+    throw new Error('La durée initiale du marché doit être strictement positive.');
+  }
+
+  const startDate = toUtcDay(input.startOrderDateIso);
+  const evaluationDate = toUtcDay(input.evaluationDateIso ?? new Date().toISOString());
+  const amendmentDelta = Math.round(input.amendmentDurationDeltaDays ?? 0);
+
+  const sortedOrders = [...(input.serviceOrders ?? [])].sort(
+    (a, b) => toUtcDay(a.effectiveDateIso).getTime() - toUtcDay(b.effectiveDateIso).getTime()
+  );
+
+  const suspensionIntervals: SuspensionInterval[] = [];
+  let activeArret: ServiceOrderTimelineEvent | null = null;
+  let suspendedDays = 0;
+  let weatherExcusedDays = 0;
+
+  for (const os of sortedOrders) {
+    if (os.weatherExcusedDays && os.weatherExcusedDays > 0) {
+      weatherExcusedDays += Math.round(os.weatherExcusedDays);
+    }
+
+    if (os.osType === 'ARRET' && !activeArret) {
+      activeArret = os;
+    } else if (os.osType === 'REPRISE' && activeArret) {
+      const arretDay = toUtcDay(activeArret.effectiveDateIso);
+      const repriseDay = toUtcDay(os.effectiveDateIso);
+      const diff = Math.max(
+        0,
+        Math.round((repriseDay.getTime() - arretDay.getTime()) / (24 * 60 * 60 * 1000))
+      );
+      suspendedDays += diff;
+      suspensionIntervals.push({
+        arretOsNumber: activeArret.osNumber,
+        arretDateIso: arretDay.toISOString().slice(0, 10),
+        repriseOsNumber: os.osNumber,
+        repriseDateIso: repriseDay.toISOString().slice(0, 10),
+        suspendedDays: diff,
+        openEnded: false,
+      });
+      activeArret = null;
+    }
+  }
+
+  let isCurrentlySuspended = false;
+  if (activeArret) {
+    const arretDay = toUtcDay(activeArret.effectiveDateIso);
+    const diff = Math.max(
+      0,
+      Math.round((evaluationDate.getTime() - arretDay.getTime()) / (24 * 60 * 60 * 1000))
+    );
+    suspendedDays += diff;
+    isCurrentlySuspended = true;
+    suspensionIntervals.push({
+      arretOsNumber: activeArret.osNumber,
+      arretDateIso: arretDay.toISOString().slice(0, 10),
+      repriseOsNumber: null,
+      repriseDateIso: evaluationDate.toISOString().slice(0, 10),
+      suspendedDays: diff,
+      openEnded: true,
+    });
+  }
+
+  const totalAdjustedDurationDays = Math.max(
+    1,
+    Math.round(input.initialDurationDays) + amendmentDelta + suspendedDays + weatherExcusedDays
+  );
+
+  const initialCompletionDateIso = addDaysIso(startDate, Math.round(input.initialDurationDays));
+  const revisedCompletionDateIso = addDaysIso(startDate, totalAdjustedDurationDays);
+  const revisedDateUtc = toUtcDay(revisedCompletionDateIso);
+
+  const rawDelayDays = Math.round(
+    (evaluationDate.getTime() - revisedDateUtc.getTime()) / (24 * 60 * 60 * 1000)
+  );
+  const actualDelayDays = !isCurrentlySuspended && rawDelayDays > 0 ? rawDelayDays : 0;
+
+  return {
+    startDateIso: startDate.toISOString().slice(0, 10),
+    initialCompletionDateIso,
+    revisedCompletionDateIso,
+    evaluationDateIso: evaluationDate.toISOString().slice(0, 10),
+    initialDurationDays: Math.round(input.initialDurationDays),
+    amendmentDurationDeltaDays: amendmentDelta,
+    suspendedDays,
+    weatherExcusedDays,
+    totalAdjustedDurationDays,
+    actualDelayDays,
+    isCurrentlySuspended,
+    suspensionIntervals,
+  };
+}

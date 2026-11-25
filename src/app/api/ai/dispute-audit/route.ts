@@ -1,9 +1,13 @@
 import { analyzeAndDraftDisputeResponse } from '../../../../lib/ai/disputeAnalyzer';
+import { guardAiApiRequest } from '../../../../lib/security/apiAuthAndRateLimit';
 import type { DisputeAuditInput } from '../../../../types/ai';
 
 export const runtime = 'nodejs';
 
 export async function POST(req: Request): Promise<Response> {
+  const guard = await guardAiApiRequest(req);
+  if (!guard.ok) return guard.response;
+
   try {
     const body = (await req.json()) as DisputeAuditInput;
 

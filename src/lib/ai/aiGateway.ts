@@ -9,6 +9,11 @@ import type {
   AiToolCallRequest,
   AiToolDefinition,
 } from '../../types/ai';
+import {
+  anonymizeMessagesForAi,
+  deanonymizeAiOutput,
+  deanonymizeToolCalls,
+} from './privacyAnonymizer';
 
 /**
  * Passerelle IA Multi-Fournisseurs avec Auto-Fallback (Jalon 3)
@@ -607,6 +612,15 @@ export async function invokeAiGateway(
     }
 
     try {
+      // Anonymisation obligatoire avant tout appel vers un fournisseur Cloud (Gemini, Groq, Mistral, OpenRouter)
+      const shouldAnonymize = provider !== 'ollama';
+      const anonymizedBundle = shouldAnonymize
+        ? anonymizeMessagesForAi(request.messages)
+        : null;
+      const effectiveRequest: AiGatewayRequest = anonymizedBundle
+        ? { ...request, messages: anonymizedBundle.messages }
+        : request;
+
       let result: {
         content: string;
         toolCalls: AiToolCallRequest[];
@@ -617,7 +631,7 @@ export async function invokeAiGateway(
         result = await callGeminiProvider({
           apiKey: cfg.geminiApiKey!,
           model,
-          request,
+          request: effectiveRequest,
           fetchFn,
           timeoutMs,
         });
@@ -627,7 +641,7 @@ export async function invokeAiGateway(
           endpoint: 'https://api.groq.com/openai/v1/chat/completions',
           apiKey: cfg.groqApiKey!,
           model,
-          request,
+          request: effectiveRequest,
           fetchFn,
           timeoutMs,
         });
@@ -637,7 +651,7 @@ export async function invokeAiGateway(
           endpoint: 'https://api.mistral.ai/v1/chat/completions',
           apiKey: cfg.mistralApiKey!,
           model,
-          request,
+          request: effectiveRequest,
           fetchFn,
           timeoutMs,
         });
@@ -647,7 +661,7 @@ export async function invokeAiGateway(
           endpoint: 'https://openrouter.ai/api/v1/chat/completions',
           apiKey: cfg.openrouterApiKey!,
           model,
-          request,
+          request: effectiveRequest,
           fetchFn,
           timeoutMs,
           extraHeaders: {
@@ -665,6 +679,14 @@ export async function invokeAiGateway(
         });
       }
 
+      // Réinjection des valeurs réelles uniquement pour l'utilisateur authentifié
+      const finalContent = anonymizedBundle
+        ? deanonymizeAiOutput(result.content, anonymizedBundle.tokenMap)
+        : result.content;
+      const finalToolCalls = anonymizedBundle
+        ? deanonymizeToolCalls(result.toolCalls, anonymizedBundle.tokenMap)
+        : result.toolCalls;
+
       const latencyMs = Math.max(0, nowFn() - attemptStart);
       attempts.push({
         provider,
@@ -677,8 +699,8 @@ export async function invokeAiGateway(
       return {
         providerUsed: provider,
         modelUsed: model,
-        content: result.content,
-        toolCalls: result.toolCalls,
+        content: finalContent,
+        toolCalls: finalToolCalls,
         isOfflineFallback: provider === 'ollama',
         latencyMs: Math.max(0, nowFn() - totalStart),
         usage: result.usage,

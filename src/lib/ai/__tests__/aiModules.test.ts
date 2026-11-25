@@ -609,41 +609,58 @@ describe('Jalon 3 — Assistant d’Audit & Réponse aux Contentieux', () => {
 });
 
 describe('Jalon 3 — Routes API Next.js App Router', () => {
-  it('expose GET /api/ai/gateway et valide les requêtes POST', async () => {
-    const getRes = await gatewayGet();
-    expect(getRes.status).toBe(200);
-    const json = (await getRes.json()) as { status: string; availableTools: string[] };
-    expect(json.status).toBe('ok');
-    expect(json.availableTools).toContain('create_procurement_project');
+  it('bloque les appels non authentifiés (401) puis valide GET/POST avec ALLOW_UNAUTHENTICATED_API_TEST=true', async () => {
+    const prevBypass = process.env.ALLOW_UNAUTHENTICATED_API_TEST;
+    delete process.env.ALLOW_UNAUTHENTICATED_API_TEST;
 
-    const badPost = await gatewayPost(
-      new Request('http://localhost/api/ai/gateway', {
-        method: 'POST',
-        body: JSON.stringify({ mode: 'gateway', messages: [] }),
-        headers: { 'Content-Type': 'application/json' },
-      })
-    );
-    expect(badPost.status).toBe(400);
+    const unauthRes = await gatewayGet(new Request('http://localhost/api/ai/gateway'));
+    expect(unauthRes.status).toBe(401);
 
-    const corrGet = await correspondenceGet();
-    expect(corrGet.status).toBe(200);
+    process.env.ALLOW_UNAUTHENTICATED_API_TEST = 'true';
+    try {
+      const getRes = await gatewayGet(new Request('http://localhost/api/ai/gateway'));
+      expect(getRes.status).toBe(200);
+      const json = (await getRes.json()) as { status: string; availableTools: string[] };
+      expect(json.status).toBe('ok');
+      expect(json.availableTools).toContain('create_procurement_project');
 
-    const badCorr = await correspondencePost(
-      new Request('http://localhost/api/ai/correspondence', {
-        method: 'POST',
-        body: JSON.stringify({ action: 'learn' }),
-        headers: { 'Content-Type': 'application/json' },
-      })
-    );
-    expect(badCorr.status).toBe(400);
+      const badPost = await gatewayPost(
+        new Request('http://localhost/api/ai/gateway', {
+          method: 'POST',
+          body: JSON.stringify({ mode: 'gateway', messages: [] }),
+          headers: { 'Content-Type': 'application/json' },
+        })
+      );
+      expect(badPost.status).toBe(400);
 
-    const badDispute = await disputeAuditPost(
-      new Request('http://localhost/api/ai/dispute-audit', {
-        method: 'POST',
-        body: JSON.stringify({}),
-        headers: { 'Content-Type': 'application/json' },
-      })
-    );
-    expect(badDispute.status).toBe(400);
+      const corrGet = await correspondenceGet(
+        new Request('http://localhost/api/ai/correspondence')
+      );
+      expect(corrGet.status).toBe(200);
+
+      const badCorr = await correspondencePost(
+        new Request('http://localhost/api/ai/correspondence', {
+          method: 'POST',
+          body: JSON.stringify({ action: 'learn' }),
+          headers: { 'Content-Type': 'application/json' },
+        })
+      );
+      expect(badCorr.status).toBe(400);
+
+      const badDispute = await disputeAuditPost(
+        new Request('http://localhost/api/ai/dispute-audit', {
+          method: 'POST',
+          body: JSON.stringify({}),
+          headers: { 'Content-Type': 'application/json' },
+        })
+      );
+      expect(badDispute.status).toBe(400);
+    } finally {
+      if (prevBypass === undefined) {
+        delete process.env.ALLOW_UNAUTHENTICATED_API_TEST;
+      } else {
+        process.env.ALLOW_UNAUTHENTICATED_API_TEST = prevBypass;
+      }
+    }
   });
 });

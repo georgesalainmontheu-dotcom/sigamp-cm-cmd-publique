@@ -1,13 +1,13 @@
 'use client';
 
 import { useState } from 'react';
-import { AppShell } from '../components/layout/AppShell';
-import { BidderPortalWorkspace } from '../components/workspaces/BidderPortalWorkspace';
-import { CommissionScaWorkspace } from '../components/workspaces/CommissionScaWorkspace';
-import { DisputeWorkspace } from '../components/workspaces/DisputeWorkspace';
-import { FinanceControllerWorkspace } from '../components/workspaces/FinanceControllerWorkspace';
-import { SigampMoWorkspace } from '../components/workspaces/SigampMoWorkspace';
-import type { WorkspaceSpaceId } from '../lib/ui/demoProfiles';
+import { AppShell } from '../../components/layout/AppShell';
+import { BidderPortalWorkspace } from '../../components/workspaces/BidderPortalWorkspace';
+import { CommissionScaWorkspace } from '../../components/workspaces/CommissionScaWorkspace';
+import { DisputeWorkspace } from '../../components/workspaces/DisputeWorkspace';
+import { FinanceControllerWorkspace } from '../../components/workspaces/FinanceControllerWorkspace';
+import { SigampMoWorkspace } from '../../components/workspaces/SigampMoWorkspace';
+import type { WorkspaceSpaceId } from '../../lib/ui/demoProfiles';
 
 export default function HomePage() {
   const [activeSpace, setActiveSpace] = useState<WorkspaceSpaceId>('SIGAMP_MO');

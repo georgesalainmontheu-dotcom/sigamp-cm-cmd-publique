@@ -2,6 +2,7 @@
 
 import { Bot, Loader2, Mic, MicOff, Send, Sparkles, Terminal, Wrench, X } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
+import { buildAuthenticatedJsonHeaders } from '../../lib/supabase/client';
 import type { AgenticWorkflowResult, AiToolExecutionResult } from '../../types/ai';
 import type { ActiveRoleProfile } from '../../lib/ui/demoProfiles';
 
@@ -98,9 +99,10 @@ export function GlobalAiCommandBar({
     setLoading(true);
     setError(null);
     try {
+      const headers = await buildAuthenticatedJsonHeaders();
       const res = await fetch('/api/ai/gateway', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers,
         body: JSON.stringify({
           mode: 'copilot',
           userPrompt: query,

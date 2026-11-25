@@ -508,9 +508,9 @@ export async function generateOfficialPdf(
   const lastPage = pdfDoc.getPage(pdfDoc.getPageCount() - 1);
   lastPage.drawRectangle({
     x: MARGIN,
-    y: 28,
+    y: 24,
     width: CONTENT_W,
-    height: 70,
+    height: 82,
     color: LIGHT_BG,
     borderColor: GOLD,
     borderWidth: 1,
@@ -518,15 +518,15 @@ export async function generateOfficialPdf(
 
   lastPage.drawImage(qrImage, {
     x: PAGE_W - MARGIN - 64,
-    y: 33,
+    y: 35,
     width: 60,
     height: 60,
   });
 
   lastPage.drawText('SCELLE CRYPTOGRAPHIQUE & VERIFICATION D’AUTHENTICITE', {
     x: MARGIN + 10,
-    y: 82,
-    size: 8.2,
+    y: 92,
+    size: 8.0,
     font: fontBold,
     color: NAVY,
   });
@@ -534,8 +534,8 @@ export async function generateOfficialPdf(
     sanitizeWinAnsiText(`Empreinte SHA-256 : ${contentSha256}`),
     {
       x: MARGIN + 10,
-      y: 66,
-      size: 7.5,
+      y: 79,
+      size: 7.2,
       font: fontRegular,
       color: SLATE,
     }
@@ -546,20 +546,44 @@ export async function generateOfficialPdf(
     ),
     {
       x: MARGIN + 10,
-      y: 52,
-      size: 7.5,
+      y: 67,
+      size: 7.2,
       font: fontRegular,
       color: SLATE,
     }
   );
   lastPage.drawText(
-    'Scannez le QR Code pour verifier ce document dans le registre immutable audit_logs.',
+    sanitizeWinAnsiText(
+      "Scelle d'integrite interne SIGAMP-CM (SHA-256) - a completer par signature/cachet officiel"
+    ),
     {
       x: MARGIN + 10,
-      y: 38,
-      size: 7.3,
-      font: fontRegular,
+      y: 53,
+      size: 6.9,
+      font: fontBold,
       color: EMERALD,
+    }
+  );
+  lastPage.drawText(
+    sanitizeWinAnsiText(
+      'ou certificat electronique qualifie (ANTIC) selon procedure en vigueur.'
+    ),
+    {
+      x: MARGIN + 10,
+      y: 42,
+      size: 6.9,
+      font: fontBold,
+      color: EMERALD,
+    }
+  );
+  lastPage.drawText(
+    'Verification publique : /verify/<sha256> ou registre immutable audit_logs.',
+    {
+      x: MARGIN + 10,
+      y: 30,
+      size: 6.7,
+      font: fontRegular,
+      color: SLATE,
     }
   );
 

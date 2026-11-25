@@ -15,21 +15,31 @@ import {
   generateOfficialPdf,
   type GeneratedOfficialPdfResult,
 } from '../../lib/pdf/pdfGenerator';
+import { buildAuthenticatedJsonHeaders } from '../../lib/supabase/client';
 import type { ActiveRoleProfile } from '../../lib/ui/demoProfiles';
-import type { DisputeAuditInput, DisputeAuditResult } from '../../types/ai';
+import type {
+  DisputeAuditInput,
+  DisputeAuditResult,
+  DisputeStage,
+} from '../../types/ai';
 import { PdfPreviewModal } from '../pdf/PdfPreviewModal';
 
 export function DisputeWorkspace({ profile }: { profile: ActiveRoleProfile }) {
+  const [stage, setStage] = useState<DisputeStage>('ATTRIBUTION');
   const [filedAtIso, setFiledAtIso] = useState('2026-05-27T14:00:00.000Z');
   const [referenceEventAtIso, setReferenceEventAtIso] = useState('2026-05-19T10:00:00.000Z');
   const [priorMoVerified, setPriorMoVerified] = useState(true);
+  const [appealBondRequired, setAppealBondRequired] = useState(true);
+  const [appealBondRef, setAppealBondRef] = useState('CAUT-REC-2026-88');
   const [loading, setLoading] = useState(false);
+  const [apiError, setApiError] = useState<string | null>(null);
   const [auditResult, setAuditResult] = useState<DisputeAuditResult | null>(null);
   const [pdfResult, setPdfResult] = useState<GeneratedOfficialPdfResult | null>(null);
   const [activeDocView, setActiveDocView] = useState<'MO' | 'ARMP'>('ARMP');
 
   const runDisputeAudit = async () => {
     setLoading(true);
+    setApiError(null);
     try {
       const payload: DisputeAuditInput = {
         entityId: profile.entityId,
@@ -43,12 +53,14 @@ export function DisputeWorkspace({ profile }: { profile: ActiveRoleProfile }) {
         procurementMode: 'AONO',
         nature: 'TRAVAUX',
         disputeNumber: 'REC-2026-002',
-        stage: 'ATTRIBUTION',
+        stage,
         claimantSupplierId: 'sup-claimant',
         claimantName: 'BTP EXPRESS SARL',
         filedAtIso,
         referenceEventAtIso,
         priorMoSeizureVerified: priorMoVerified,
+        appealBondRequired,
+        appealBondRef: appealBondRef.trim() || undefined,
         subject: "Contestation de l'attribution provisoire du Lot 1",
         groundsSummary:
           "Le requérant soutient être moins-disant qualifié et dénonce la validité de l'attestation fiscale de l'attributaire provisoire.",
@@ -138,11 +150,17 @@ export function DisputeWorkspace({ profile }: { profile: ActiveRoleProfile }) {
         useAiSynthesis: false,
       };
 
+      const headers = await buildAuthenticatedJsonHeaders();
       const res = await fetch('/api/ai/dispute-audit', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers,
         body: JSON.stringify(payload),
       });
+      if (!res.ok) {
+        const errBody = (await res.json().catch(() => ({}))) as { error?: string };
+        setApiError(errBody.error ?? `Erreur serveur (${res.status})`);
+        return;
+      }
       const json = (await res.json()) as DisputeAuditResult;
       setAuditResult(json);
     } finally {
@@ -201,10 +219,24 @@ export function DisputeWorkspace({ profile }: { profile: ActiveRoleProfile }) {
           </button>
         </div>
 
-        <div className="mt-4 grid grid-cols-1 gap-3 md:grid-cols-3 text-xs">
+        <div className="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3 text-xs">
+          <div>
+            <label className="font-semibold text-slate-600">Phase du recours (CMP)</label>
+            <select
+              value={stage}
+              onChange={(e) => setStage(e.target.value as DisputeStage)}
+              className="mt-1 w-full rounded-lg border px-3 py-2"
+            >
+              <option value="PRE_OUVERTURE">PRE_OUVERTURE (5j ouvrables)</option>
+              <option value="OUVERTURE_PLIS">OUVERTURE_PLIS (5j ouvrables)</option>
+              <option value="ATTRIBUTION">ATTRIBUTION (5j ouvrables)</option>
+              <option value="EXECUTION">EXECUTION (phase contractuelle)</option>
+              <option value="RESILIATION">RESILIATION (phase résiliation)</option>
+            </select>
+          </div>
           <div>
             <label className="font-semibold text-slate-600">
-              Publication Attribution (ISO) — ex: 19 mai (20 mai férié)
+              Publication / Fait générateur (ISO)
             </label>
             <input
               value={referenceEventAtIso}
@@ -214,7 +246,7 @@ export function DisputeWorkspace({ profile }: { profile: ActiveRoleProfile }) {
           </div>
           <div>
             <label className="font-semibold text-slate-600">
-              Dépôt Recours (ISO) — J+5 = 27 mai / J+6 = 28 mai
+              Dépôt Recours (ISO) — ex: 27 mai / 28 mai
             </label>
             <input
               value={filedAtIso}
@@ -222,7 +254,18 @@ export function DisputeWorkspace({ profile }: { profile: ActiveRoleProfile }) {
               className="mt-1 w-full rounded-lg border px-3 py-2 font-mono"
             />
           </div>
-          <label className="mt-5 flex items-center gap-2 font-medium text-slate-700">
+          <div>
+            <label className="font-semibold text-slate-600">
+              Réf. Cautionnement de recours (ARMP)
+            </label>
+            <input
+              value={appealBondRef}
+              onChange={(e) => setAppealBondRef(e.target.value)}
+              placeholder="Ex: CAUT-REC-2026-88"
+              className="mt-1 w-full rounded-lg border px-3 py-2 font-mono"
+            />
+          </div>
+          <label className="flex items-center gap-2 pt-2 font-medium text-slate-700">
             <input
               type="checkbox"
               checked={priorMoVerified}
@@ -230,7 +273,21 @@ export function DisputeWorkspace({ profile }: { profile: ActiveRoleProfile }) {
             />
             Saisine préalable du Maître d&apos;Ouvrage vérifiée
           </label>
+          <label className="flex items-center gap-2 pt-2 font-medium text-slate-700">
+            <input
+              type="checkbox"
+              checked={appealBondRequired}
+              onChange={(e) => setAppealBondRequired(e.target.checked)}
+            />
+            Cautionnement de recours exigé
+          </label>
         </div>
+
+        {apiError && (
+          <div className="mt-3 rounded-xl border border-rose-200 bg-rose-50 px-3 py-2 text-xs text-rose-800">
+            {apiError}
+          </div>
+        )}
       </div>
 
       {auditResult && (
@@ -246,12 +303,14 @@ export function DisputeWorkspace({ profile }: { profile: ActiveRoleProfile }) {
             >
               <div className="flex items-center gap-1.5 font-bold">
                 <Clock className="h-4 w-4" />
-                Délai Impératif (5j ouvrables)
+                Recevabilité ({auditResult.admissibility.stage})
               </div>
               <p className="mt-1.5">
                 {auditResult.admissibility.isForeclosed
                   ? 'FORCLUSION CONSTATÉE — Dépôt hors délai'
-                  : `RECEVABLE (${auditResult.admissibility.businessDaysElapsed}/5 jours ouvrables)`}
+                  : auditResult.admissibility.isAdmissible
+                    ? `RECEVABLE (${auditResult.admissibility.businessDaysElapsed}/${auditResult.admissibility.legalDeadlineBusinessDays}j ouvrables)`
+                    : `PIÈCE MANQUANTE : ${auditResult.admissibility.missingAdmissibilityElements.join(' ; ')}`}
               </p>
             </div>
 

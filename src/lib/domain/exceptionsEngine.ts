@@ -213,3 +213,134 @@ export function calculateFaultTerminationLiquidation(
     ],
   };
 }
+
+// ============================================================================
+// SURVEILLANCE D'EXPIRATION DES CAUTIONS OHADA & ASSURANCES CHANTIER
+// ============================================================================
+
+export type SecurityInstrumentType =
+  | 'CAUTION_SOUMISSION'
+  | 'CAUTION_BONNE_EXECUTION'
+  | 'CAUTION_AVANCE_DEMARRAGE'
+  | 'CAUTION_RETENUE_GARANTIE'
+  | 'ASSURANCE_TRC_RC';
+
+export interface SecurityRecordInput {
+  id: string;
+  contractOrBidRef: string;
+  supplierName: string;
+  securityType: SecurityInstrumentType;
+  issuerInstitution: string;
+  referenceNumber: string;
+  amountFcfa: number;
+  expiryDateIso: string;
+  releasedAtIso?: string | null;
+  confiscated?: boolean;
+  ohadaFirstDemand?: boolean;
+}
+
+export type SecurityExpirySeverity = 'EXPIRED' | 'CRITICAL' | 'WARNING';
+
+export interface SecurityExpiryAlert {
+  securityId: string;
+  contractOrBidRef: string;
+  supplierName: string;
+  securityType: SecurityInstrumentType;
+  issuerInstitution: string;
+  referenceNumber: string;
+  amountFcfa: number;
+  expiryDateIso: string;
+  daysRemaining: number;
+  severity: SecurityExpirySeverity;
+  recommendedAction: string;
+}
+
+export interface SecuritiesExpiryReport {
+  referenceDateIso: string;
+  evaluatedActiveCount: number;
+  alerts: SecurityExpiryAlert[];
+  expiredCount: number;
+  criticalCount: number;
+  warningCount: number;
+  totalAtRiskAmountFcfa: number;
+}
+
+/**
+ * Evalue les cautions bancaires OHADA (Acte Uniforme Sûretés - Garantie autonome à première demande)
+ * et assurances chantiers actives (non mainlevées et non confisquées) :
+ * - EXPIRED  : daysRemaining < 0
+ * - CRITICAL : 0 <= daysRemaining <= 7 jours
+ * - WARNING  : 8 <= daysRemaining <= 30 jours
+ */
+export function evaluateSecuritiesExpiry(
+  securities: SecurityRecordInput[],
+  referenceDate: Date = new Date()
+): SecuritiesExpiryReport {
+  const refUtc = new Date(
+    Date.UTC(
+      referenceDate.getUTCFullYear(),
+      referenceDate.getUTCMonth(),
+      referenceDate.getUTCDate()
+    )
+  );
+  const active = securities.filter((s) => !s.releasedAtIso && !s.confiscated);
+
+  const alerts: SecurityExpiryAlert[] = [];
+
+  for (const sec of active) {
+    const expParsed = new Date(sec.expiryDateIso);
+    if (Number.isNaN(expParsed.getTime())) continue;
+    const expUtc = new Date(
+      Date.UTC(expParsed.getUTCFullYear(), expParsed.getUTCMonth(), expParsed.getUTCDate())
+    );
+    const daysRemaining = Math.round(
+      (expUtc.getTime() - refUtc.getTime()) / (24 * 60 * 60 * 1000)
+    );
+
+    if (daysRemaining > 30) continue;
+
+    let severity: SecurityExpirySeverity;
+    let recommendedAction: string;
+    if (daysRemaining < 0) {
+      severity = 'EXPIRED';
+      recommendedAction =
+        'ALERTE CRITIQUE : Caution/Assurance expirée sans mainlevée — exiger un avenant de prorogation immédiat ou suspendre les paiements.';
+    } else if (daysRemaining <= 7) {
+      severity = 'CRITICAL';
+      recommendedAction =
+        `Échéance imminente (${daysRemaining}j) : notifier immédiatement le titulaire et l'établissement garant pour renouvellement sous peine de mise en jeu.`;
+    } else {
+      severity = 'WARNING';
+      recommendedAction =
+        `Échéance proche (${daysRemaining}j) : planifier la prorogation de validité ou la mainlevée si la réception est prononcée.`;
+    }
+
+    alerts.push({
+      securityId: sec.id,
+      contractOrBidRef: sec.contractOrBidRef,
+      supplierName: sec.supplierName,
+      securityType: sec.securityType,
+      issuerInstitution: sec.issuerInstitution,
+      referenceNumber: sec.referenceNumber,
+      amountFcfa: roundFcfa(sec.amountFcfa),
+      expiryDateIso: expUtc.toISOString().slice(0, 10),
+      daysRemaining,
+      severity,
+      recommendedAction,
+    });
+  }
+
+  alerts.sort((a, b) => a.daysRemaining - b.daysRemaining);
+
+  return {
+    referenceDateIso: refUtc.toISOString().slice(0, 10),
+    evaluatedActiveCount: active.length,
+    alerts,
+    expiredCount: alerts.filter((a) => a.severity === 'EXPIRED').length,
+    criticalCount: alerts.filter((a) => a.severity === 'CRITICAL').length,
+    warningCount: alerts.filter((a) => a.severity === 'WARNING').length,
+    totalAtRiskAmountFcfa: roundFcfa(
+      alerts.reduce((acc, a) => acc + a.amountFcfa, 0)
+    ),
+  };
+}

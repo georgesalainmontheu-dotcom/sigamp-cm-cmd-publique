@@ -36,6 +36,105 @@ export const DEFAULT_CMP_THRESHOLDS: CmpThresholdsConfig = {
   addendumMinNoticeDays: 7,
 };
 
+export interface NatureThresholdRule {
+  bcaMaxExclusiveFcfa: number;
+  dcCotationMaxExclusiveFcfa: number | null;
+  lettreCommandeMaxExclusiveFcfa: number;
+  marcheMinFcfa: number;
+  cccmThresholdFcfa: number;
+  cccmOrgan: CommissionType;
+}
+
+/**
+ * Matrice réglementaire stricte par nature de prestation (Décret n° 2018/366 & Décret 2013/271).
+ */
+export const CMP_NATURE_THRESHOLDS: Record<ProcurementNature, NatureThresholdRule> = {
+  TRAVAUX: {
+    bcaMaxExclusiveFcfa: 5_000_000,
+    dcCotationMaxExclusiveFcfa: null,
+    lettreCommandeMaxExclusiveFcfa: 50_000_000,
+    marcheMinFcfa: 50_000_000,
+    cccmThresholdFcfa: 500_000_000,
+    cccmOrgan: 'CCCM_TR',
+  },
+  FOURNITURES: {
+    bcaMaxExclusiveFcfa: 5_000_000,
+    dcCotationMaxExclusiveFcfa: 30_000_000,
+    lettreCommandeMaxExclusiveFcfa: 50_000_000,
+    marcheMinFcfa: 50_000_000,
+    cccmThresholdFcfa: 250_000_000,
+    cccmOrgan: 'CCCM_AG',
+  },
+  SERVICES_QUANTIFIABLES: {
+    bcaMaxExclusiveFcfa: 5_000_000,
+    dcCotationMaxExclusiveFcfa: 30_000_000,
+    lettreCommandeMaxExclusiveFcfa: 50_000_000,
+    marcheMinFcfa: 50_000_000,
+    cccmThresholdFcfa: 100_000_000,
+    cccmOrgan: 'CCCM_SPI',
+  },
+  PRESTATIONS_INTELLECTUELLES: {
+    bcaMaxExclusiveFcfa: 5_000_000,
+    dcCotationMaxExclusiveFcfa: null,
+    lettreCommandeMaxExclusiveFcfa: 50_000_000,
+    marcheMinFcfa: 50_000_000,
+    cccmThresholdFcfa: 100_000_000,
+    cccmOrgan: 'CCCM_SPI',
+  },
+};
+
+export interface EntityCommissionRoutingRule {
+  defaultCommission: CommissionType;
+  requiresTutelleControl: boolean;
+  supportsCccmFinancesFc: boolean;
+  legalBasis: string;
+}
+
+export const ENTITY_COMMISSION_RULES: Record<EntityType, EntityCommissionRoutingRule> = {
+  COMMUNE: {
+    defaultCommission: 'CDPM',
+    requiresTutelleControl: true,
+    supportsCccmFinancesFc: false,
+    legalBasis: 'CDPM (Commune) + Contrôle de légalité Préfet / CGCTD',
+  },
+  COMMUNAUTE_URBAINE: {
+    defaultCommission: 'CIPM',
+    requiresTutelleControl: true,
+    supportsCccmFinancesFc: false,
+    legalBasis: 'CIPM (Communauté Urbaine) + Tutelle Préfet / MINMAP',
+  },
+  REGION: {
+    defaultCommission: 'CRPM',
+    requiresTutelleControl: true,
+    supportsCccmFinancesFc: false,
+    legalBasis: 'CRPM (Conseil Régional) + Tutelle Gouverneur / CGCTD',
+  },
+  MINISTERE: {
+    defaultCommission: 'CIPM',
+    requiresTutelleControl: false,
+    supportsCccmFinancesFc: true,
+    legalBasis: 'CIPM Ministérielle + CCCM sectorielle compétente',
+  },
+  EPA: {
+    defaultCommission: 'CIPM',
+    requiresTutelleControl: false,
+    supportsCccmFinancesFc: true,
+    legalBasis: 'CIPM d’Établissement Public Administratif + CCCM compétente',
+  },
+  ENTREPRISE_PUBLIQUE: {
+    defaultCommission: 'CIPM',
+    requiresTutelleControl: false,
+    supportsCccmFinancesFc: true,
+    legalBasis: 'CIPM d’Entreprise Publique + CCCM-FC/sectorielle le cas échéant',
+  },
+  PROJET_PROGRAMME: {
+    defaultCommission: 'CIPM',
+    requiresTutelleControl: false,
+    supportsCccmFinancesFc: false,
+    legalBasis: 'CIPM / Commission Spéciale de Passation Projet',
+  },
+};
+
 export interface ProcurementRoutingInput {
   entityType: EntityType;
   nature: ProcurementNature;
@@ -45,6 +144,8 @@ export interface ProcurementRoutingInput {
   isGreAGreRequested?: boolean;
   greAGreJustification?: 'URGENCE_IMPERIEUSE' | 'MONOPOLE_BREVET' | 'SECRET_DEFENSE' | 'CARENCE_REPRISE';
   isUrgent?: boolean;
+  /** Pour les fournitures/services financiers ou opérations de régie financière relevant de CCCM-FC */
+  isFinancialGovernanceScope?: boolean;
   customThresholds?: Partial<CmpThresholdsConfig>;
 }
 
@@ -64,31 +165,22 @@ export interface ProcurementRoutingResult {
 }
 
 function resolveLocalCommission(entityType: EntityType): CommissionType {
-  switch (entityType) {
-    case 'COMMUNE':
-      return 'CDPM';
-    case 'REGION':
-      return 'CRPM';
-    case 'COMMUNAUTE_URBAINE':
-    case 'MINISTERE':
-    case 'EPA':
-    case 'ENTREPRISE_PUBLIQUE':
-    case 'PROJET_PROGRAMME':
-    default:
-      return 'CIPM';
-  }
+  return ENTITY_COMMISSION_RULES[entityType]?.defaultCommission ?? 'CIPM';
 }
 
-function resolveCccmOrgan(nature: ProcurementNature): CommissionType {
-  switch (nature) {
-    case 'TRAVAUX':
-      return 'CCCM_TR';
-    case 'FOURNITURES':
-      return 'CCCM_AG';
-    case 'SERVICES_QUANTIFIABLES':
-    case 'PRESTATIONS_INTELLECTUELLES':
-      return 'CCCM_SPI';
+function resolveCccmOrgan(
+  nature: ProcurementNature,
+  entityType?: EntityType,
+  isFinancialGovernanceScope?: boolean
+): CommissionType {
+  if (
+    isFinancialGovernanceScope &&
+    entityType &&
+    ENTITY_COMMISSION_RULES[entityType]?.supportsCccmFinancesFc
+  ) {
+    return 'CCCM_FC';
   }
+  return CMP_NATURE_THRESHOLDS[nature].cccmOrgan;
 }
 
 export function routeProcurementProcedure(
@@ -146,7 +238,9 @@ export function routeProcurementProcedure(
       recommendedMode: 'GRE_A_GRE',
       primaryCommission: amount >= cfg.bcaMaxExclusiveFcfa ? resolveLocalCommission(input.entityType) : null,
       requiresCccmPriorOpinion: requiresCccm,
-      cccmOrgan: requiresCccm ? resolveCccmOrgan(input.nature) : null,
+      cccmOrgan: requiresCccm
+        ? resolveCccmOrgan(input.nature, input.entityType, input.isFinancialGovernanceScope)
+        : null,
       requiresMinmapPriorAuth: true,
       requiresTutelleLegalityControl,
       requiresBilingualAao: false,
@@ -240,7 +334,9 @@ export function routeProcurementProcedure(
 
   const cccmThreshold = cfg.cccmThresholdsFcfa[input.nature];
   const requiresCccm = amount >= cccmThreshold;
-  const cccmOrgan = requiresCccm ? resolveCccmOrgan(input.nature) : null;
+  const cccmOrgan = requiresCccm
+    ? resolveCccmOrgan(input.nature, input.entityType, input.isFinancialGovernanceScope)
+    : null;
 
   if (requiresCccm) {
     warnings.push(
