@@ -1,12 +1,44 @@
+import { createClient } from '@supabase/supabase-js';
 import { CheckCircle2, FileCheck2, ShieldAlert, ShieldCheck } from 'lucide-react';
 import Link from 'next/link';
 
-export default function VerifySealPage({
+export const dynamic = 'force-dynamic';
+
+interface SealVerifyRow {
+  found: boolean;
+  seal_source: string;
+  document_ref: string;
+  entity_name: string | null;
+  recorded_at: string;
+  sha256_hash: string;
+}
+
+async function verifySealInSupabase(sealId: string): Promise<SealVerifyRow | null> {
+  const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
+  const anonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
+  if (!url || !anonKey) return null;
+
+  try {
+    const supabase = createClient(url, anonKey, {
+      auth: { persistSession: false, autoRefreshToken: false },
+    });
+    const { data, error } = await supabase.rpc('verify_document_seal', {
+      p_seal_id: sealId,
+    });
+    if (error || !Array.isArray(data) || data.length === 0) return null;
+    return data[0] as SealVerifyRow;
+  } catch {
+    return null;
+  }
+}
+
+export default async function VerifySealPage({
   params,
 }: {
   params: { sealId: string };
 }) {
   const sealId = decodeURIComponent(params.sealId);
+  const dbMatch = await verifySealInSupabase(sealId);
   const isValidHex64 = /^[a-f0-9]{64}$/i.test(sealId);
   const isKnownDemo = sealId === 'SIGAMP-SEAL-DEMO' || sealId.startsWith('SIGAMP-');
 
@@ -40,16 +72,35 @@ export default function VerifySealPage({
           </p>
         </div>
 
-        {isValidHex64 || isKnownDemo ? (
+        {dbMatch?.found ? (
+          <div className="mt-5 rounded-xl border border-emerald-300 bg-emerald-50 p-4 text-xs text-emerald-950">
+            <p className="flex items-center gap-2 text-sm font-bold text-emerald-800">
+              <CheckCircle2 className="h-5 w-5 text-emerald-600" />
+              Authentifié dans le registre Supabase SIGAMP-CM ({dbMatch.seal_source})
+            </p>
+            <div className="mt-2 grid gap-1 text-emerald-900 sm:grid-cols-2">
+              <div>
+                Document : <strong>{dbMatch.document_ref}</strong>
+              </div>
+              <div>
+                Entité : <strong>{dbMatch.entity_name ?? 'Entité Publique CM'}</strong>
+              </div>
+              <div className="sm:col-span-2">
+                Horodatage registre :{' '}
+                <strong>{new Date(dbMatch.recorded_at).toLocaleString('fr-FR')}</strong>
+              </div>
+            </div>
+          </div>
+        ) : isValidHex64 || isKnownDemo ? (
           <div className="mt-5 rounded-xl border border-emerald-200 bg-emerald-50 p-4 text-xs text-emerald-950">
             <p className="flex items-center gap-2 text-sm font-bold text-emerald-800">
               <CheckCircle2 className="h-5 w-5 text-emerald-600" />
-              Format d’empreinte conforme — Scellé d’intégrité interne SIGAMP-CM valide
+              Format d’empreinte conforme — Scellé d’intégrité interne SHA-256 valide
             </p>
             <p className="mt-2 leading-relaxed text-emerald-900">
-              Ce document comporte une empreinte SHA-256 calculée à la génération.
-              Comparez la chaîne ci-dessus avec le pied de page du PDF imprimé ou
-              présenté en contrôle financier / ARMP.
+              Ce document comporte une empreinte SHA-256 calculée localement à la génération.
+              Si l’acte a été généré hors-ligne, sa trace apparaîtra dans le registre
+              central dès synchronisation.
             </p>
           </div>
         ) : (

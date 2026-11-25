@@ -222,3 +222,97 @@ BEGIN
     RETURN v_doc_type || '-' || v_padded || '-' || p_fiscal_year::TEXT;
 END;
 $$;
+
+-- 6. RPC publiques lecture seule pour /avis et /verify/[sealId]
+CREATE OR REPLACE FUNCTION public.list_public_avis()
+RETURNS TABLE (
+    dao_number TEXT,
+    title TEXT,
+    entity_name TEXT,
+    nature TEXT,
+    mode TEXT,
+    estimated_amount_ttc NUMERIC(18, 2),
+    published_at TIMESTAMPTZ,
+    submission_deadline TIMESTAMPTZ,
+    opening_datetime TIMESTAMPTZ
+)
+LANGUAGE sql
+STABLE
+SECURITY DEFINER
+SET search_path = public
+AS $$
+    SELECT
+        tf.dao_number,
+        p.title,
+        e.name AS entity_name,
+        p.nature::TEXT,
+        p.mode::TEXT,
+        p.estimated_amount_ttc,
+        tf.published_at,
+        tf.submission_deadline,
+        tf.opening_datetime
+    FROM public.tender_files tf
+    JOIN public.projects p ON p.id = tf.project_id
+    JOIN public.entities e ON e.id = tf.entity_id
+    WHERE tf.published_at IS NOT NULL
+    ORDER BY tf.published_at DESC
+    LIMIT 50;
+$$;
+
+GRANT EXECUTE ON FUNCTION public.list_public_avis() TO anon, authenticated;
+
+CREATE OR REPLACE FUNCTION public.verify_document_seal(p_seal_id TEXT)
+RETURNS TABLE (
+    found BOOLEAN,
+    seal_source TEXT,
+    document_ref TEXT,
+    entity_name TEXT,
+    recorded_at TIMESTAMPTZ,
+    sha256_hash TEXT
+)
+LANGUAGE plpgsql
+STABLE
+SECURITY DEFINER
+SET search_path = public
+AS $$
+DECLARE
+    v_clean TEXT := trim(COALESCE(p_seal_id, ''));
+BEGIN
+    IF length(v_clean) = 0 THEN
+        RETURN;
+    END IF;
+
+    RETURN QUERY
+    SELECT
+        TRUE AS found,
+        'audit_logs'::TEXT AS seal_source,
+        COALESCE(al.record_id, al.table_name) AS document_ref,
+        e.name AS entity_name,
+        al.created_at AS recorded_at,
+        al.record_hash AS sha256_hash
+    FROM public.audit_logs al
+    LEFT JOIN public.entities e ON e.id = al.entity_id
+    WHERE al.record_hash = v_clean
+       OR al.record_id = v_clean
+       OR (al.new_data->>'content_sha256') = v_clean
+       OR (al.new_data->>'qr_verification_id') = v_clean
+    LIMIT 1;
+
+    IF NOT FOUND THEN
+        RETURN QUERY
+        SELECT
+            TRUE AS found,
+            'tender_files'::TEXT AS seal_source,
+            tf.dao_number AS document_ref,
+            e.name AS entity_name,
+            tf.created_at AS recorded_at,
+            tf.sha256_seal AS sha256_hash
+        FROM public.tender_files tf
+        LEFT JOIN public.entities e ON e.id = tf.entity_id
+        WHERE tf.sha256_seal = v_clean
+        LIMIT 1;
+    END IF;
+END;
+$$;
+
+GRANT EXECUTE ON FUNCTION public.verify_document_seal(TEXT) TO anon, authenticated;

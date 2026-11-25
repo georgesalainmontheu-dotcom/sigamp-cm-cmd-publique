@@ -109,8 +109,8 @@ export interface EntityMembershipRecord {
     id: string;
     code: string;
     name: string;
-    entity_type: EntityType;
-    city: string | null;
+    type: EntityType;
+    municipality: string | null;
   } | null;
 }
 
@@ -137,13 +137,13 @@ export async function loadAuthenticatedUserProfiles(
   const [{ data: profileRow }, { data: memberships }] = await Promise.all([
     supabase
       .from('user_profiles')
-      .select('full_name, administrative_title')
+      .select('full_name, grade_title')
       .eq('id', user.id)
       .maybeSingle(),
     supabase
       .from('entity_memberships')
       .select(
-        'user_id, entity_id, role, commission_id, active, entities (id, code, name, entity_type, city)'
+        'user_id, entity_id, role, commission_id, active, entities (id, code, name, type, municipality)'
       )
       .eq('user_id', user.id)
       .eq('active', true),
@@ -156,7 +156,7 @@ export async function loadAuthenticatedUserProfiles(
     'Agent Public';
 
   const adminTitle =
-    (profileRow as { administrative_title?: string } | null)?.administrative_title ??
+    (profileRow as { grade_title?: string } | null)?.grade_title ??
     'Agent habilité SIGAMP-CM';
 
   const typedMemberships = (memberships ?? []) as unknown as EntityMembershipRecord[];
@@ -175,8 +175,8 @@ export async function loadAuthenticatedUserProfiles(
       entityId: m.entity_id,
       entityCode: m.entities?.code ?? 'ENT-CM',
       entityName: m.entities?.name ?? 'Entité Publique',
-      entityType: m.entities?.entity_type ?? 'COMMUNE',
-      city: m.entities?.city ?? 'Yaoundé',
+      entityType: m.entities?.type ?? 'COMMUNE',
+      city: m.entities?.municipality ?? 'Yaoundé',
       fiscalYear: new Date().getFullYear(),
     };
   });
